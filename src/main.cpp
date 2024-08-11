@@ -39,13 +39,13 @@
 #include <SD.h>
 #include <WiFi.h>
 #include "Adafruit_Sensor.h"        // https://github.com/adafruit/Adafruit_Sensor
-#include "Adafruit_ADS1X15.h"      // https://github.com/adafruit/Adafruit_ADS1X15
 #include "DHT.h"                  // https://github.com/adafruit/DHT-sensor-library
 #include "RTClib.h"              // https://github.com/adafruit/RTClib.git
-#include "LiquidCrystal_I2C.h"  // https://github.com/marcoschwartz/LiquidCrystal_I2C
-#include "PCF8574.h"           // https://github.com/xreef/PCF8574_library
-#include "WiFiManager.h"      // https://github.com/tzapu/WiFiManager
-#include "ArduinoJson.h"     // https://github.com/bblanchon/ArduinoJson
+#include "ADS1X15.h"            //https://github.com/chrissbarr/ADS1X15?utm_source=platformio&utm_medium=piohome
+#include "LiquidCrystal_I2C.h" // https://github.com/marcoschwartz/LiquidCrystal_I2C
+#include "PCF8574.h"          // https://github.com/xreef/PCF8574_library
+#include "WiFiManager.h"     // https://github.com/tzapu/WiFiManager
+#include "ArduinoJson.h"    // https://github.com/bblanchon/ArduinoJson
 
 #define BLYNK_TEMPLATE_ID "TMPL5RalpQ0jN"
 #define BLYNK_TEMPLATE_NAME "Hanguing Garden"
@@ -91,6 +91,7 @@ bool NutA_LVL=0;
 bool NutB_LVL=0;
 bool LowNutSol=0;
 byte LastScreen=0;
+byte LastSensor=0;
 byte LightLevel=0;
 byte water_LVL=0;
 byte iARROW     = 0;                              // ID icono flecha
@@ -186,8 +187,9 @@ float TDS, pH, WaterTemp, LDR;
 int analogBufferTDS[SCOUNT]; //Buffer para las medidas de TDS
 int analogBufferpH[SCOUNT]; // Buffer para las medidas de pH
 int analogBufferNTC[SCOUNT]; // Buffer para las medidas del termistor NTC sumergible
+int analogBufferLDR[SCOUNT]; // Buffer para las medidas del LDR
 int analogBufferTemp[SCOUNT];
-int analogBufferIndex = 0,copyIndex = 0;
+int analogBufferTDSIndex = 0,analogBufferpHIndex = 0, analogBufferNTCIndex = 0, analogBufferLDRIndex = 0,copyIndex = 0;
 
 // Generic variables
 int i=0;
@@ -203,8 +205,8 @@ DHT my_sensor(33, DHT22);
 RTC_DS3231 rtc;
 WiFiManager wm;
 File DataFile;
-Adafruit_ADS1115 ADC1;
-Adafruit_ADS1115 ADC2;
+ADS1115 ADC1(0x48);
+ADS1115 ADC2(0x49);
 /**  
  *  Rutina de interrupción del botón incorporado en el encoder
  */
@@ -892,13 +894,14 @@ void setup() {
   lcd.print(".");
   i++;
   delay(150);
-
-  ADC1.setGain(GAIN_ONE); // +/- 4.096V  1 bit = 0.125mV 
-  ADC2.setGain(GAIN_ONE);
-  //float adc_resolution = 65536.0; // 16 bits
   
-  if(!ADC1.begin(0x48)) sys_error3=true;                // Iniciar el ADS1115
-  if(memory.d.Slave2 && !ADC2.begin(0x49)) sys_error3=true; 
+  if(!ADC1.begin()) sys_error3=true;                // Iniciar el ADS1115
+  if(memory.d.Slave2 && !ADC2.begin()) sys_error3=true; 
+
+  ADC1.setGain(1); // +/- 4.096V  1 bit = 0.125mV 
+  ADC2.setGain(1);
+  ADC1.setMode(1);               //  SINGLE SHOT MODE
+  ADC2.setMode(1);               //  SINGLE SHOT MODE
 
   lcd.print(".");
   i++;
@@ -1140,17 +1143,46 @@ int avgArray(int Array[],int size){
 }
 void Sensors(){
   float factorEscala = 0.125; // El factor de escala del ADC es de 0,125mV
-   if(tNow-tPrevSample > 50000)     //every 50 milliseconds,read the analog sample from the ADC
+   if(tNow-tPrevSample > 20000)     //every 20 milliseconds,try to read the analog sample from the ADC
    {
      tPrevSample=tNow;
-     analogBufferTDS[analogBufferIndex] = ADC1.readADC_SingleEnded(0);    //Lectura del pin A0 del ADS1115 correspondiente al sensor TDS
-     analogBufferpH[analogBufferIndex] = ADC1.readADC_SingleEnded(1);    //Lectura del pin A1 del ADS1115 correspondiente al sensor pH
-     analogBufferNTC[analogBufferIndex]= ADC1.readADC_SingleEnded(2);    //Lectura del pin A2 del ADS1115 correspondiente al sensor NTC
-     analogBufferIndex++;
-     if(analogBufferIndex == SCOUNT) 
-         analogBufferIndex = 0;
+    if(ADC1.isConnected() && ADC1.isReady()){
+      switch(LastSensor)
+      {
+        case 0:
+            analogBufferTDS[analogBufferTDSIndex] = ADC1.getValue();    //Lectura del pin A0 del ADS1115 correspondiente al sensor TDS
+            analogBufferTDSIndex++;
+            if(analogBufferTDSIndex == SCOUNT)analogBufferTDSIndex = 0;
+            LastSensor++;
+            ADC1.requestADC(LastSensor);
+            break;
+        case 1:
+            analogBufferpH[analogBufferpHIndex] = ADC1.getValue();    //Lectura del pin A1 del ADS1115 correspondiente al sensor pH
+            analogBufferpHIndex++;
+            if(analogBufferpHIndex == SCOUNT)analogBufferpHIndex = 0;
+            LastSensor++; 
+            ADC1.requestADC(LastSensor);
+          break;
+        case 2:
+            analogBufferNTC[analogBufferNTCIndex]= ADC1.getValue();    //Lectura del pin A2 del ADS1115 correspondiente al sensor NTC
+            analogBufferNTCIndex++;
+            if(analogBufferNTCIndex == SCOUNT)analogBufferNTCIndex = 0;
+            LastSensor++; 
+            ADC1.requestADC(LastSensor);
+          break;
+        case 3:
+            analogBufferLDR[analogBufferLDRIndex]= ADC1.getValue();    //Lectura del pin A2 del ADS1115 correspondiente al sensor NTC
+            analogBufferLDRIndex++;
+            if(analogBufferLDRIndex == SCOUNT)analogBufferLDRIndex = 0;
+            LastSensor=0; 
+            ADC1.requestADC(LastSensor);
+          break;
+      break;
+      }
+    }
+    else sys_error2=1;
    }
-   if(tNow-tPrevSensorUpdate > 1000000) { // Every 1 second update the sensors value
+   if(tNow-tPrevSensorUpdate > 2000000) { // Every 2 seconds update the sensors value
       tPrevSensorUpdate=tNow;
     /* DIGITAL SENSORS*/
       if(I2C_PIN1.digitalRead(P4) && I2C_PIN1.digitalRead(P5)) water_LVL=2;
@@ -1182,7 +1214,7 @@ void Sensors(){
     if(TDS<(memory.d.minTDS+((memory.d.maxTDS-memory.d.minTDS)/2))) LowNutSol=true;
     else LowNutSol=false;
     //LDR (only 1 measurement per second because of its response time)
-    float R5_mV=(ADC1.readADC_SingleEnded(3)*factorEscala);
+    float R5_mV=factorEscala*avgArray(analogBufferLDR,SCOUNT);
     float LDR_mV=3300-R5_mV;
     float R5=3.3; // resistencia en serie con el LDR
     float LDR_kOhm=R5*(LDR_mV/R5_mV);
@@ -1199,7 +1231,7 @@ void Sensors(){
 }
 void BlynkUpdate(){
   
-  if((tNow-tPrevBlynkUpdate)>1000000){ //Cada segundo
+  if((tNow-tPrevBlynkUpdate)>2000000){ //Cada 2 segundos
     Blynk.run();
     // You can send any value at any time.
     // Please don't send more that 10 values per second.
