@@ -38,7 +38,8 @@
 #include <SPI.h>
 #include <SD.h>
 #include <WiFi.h>
-#include "Adafruit_Sensor.h"       // https://github.com/adafruit/Adafruit_Sensor
+#include "Adafruit_Sensor.h"        // https://github.com/adafruit/Adafruit_Sensor
+#include "Adafruit_ADS1X15.h"      // https://github.com/adafruit/Adafruit_ADS1X15
 #include "DHT.h"                  // https://github.com/adafruit/DHT-sensor-library
 #include "RTClib.h"              // https://github.com/adafruit/RTClib.git
 #include "LiquidCrystal_I2C.h"  // https://github.com/marcoschwartz/LiquidCrystal_I2C
@@ -46,11 +47,17 @@
 #include "WiFiManager.h"      // https://github.com/tzapu/WiFiManager
 #include "ArduinoJson.h"     // https://github.com/bblanchon/ArduinoJson
 
+#define BLYNK_TEMPLATE_ID "TMPL5RalpQ0jN"
+#define BLYNK_TEMPLATE_NAME "Hanguing Garden"
+#define BLYNK_AUTH_TOKEN "yxV5iZ4gta92R9rDKPqD0EsGJRG6I3Mk"
+#include "BlynkSimpleEsp32.h"          // https://github.com/blynkkk/blynk-library
+
 /**
 * MACROS, CONSTANTES, ENUMERADORES, ESTRUCTURAS Y VARIABLES GLOBALES
 */
-
+// Valor de tiempo (en microsegundos)
 uint64_t tNow=0,tPrevLog=0,tPrevLCDUpdate=0,tPrevBtn=0, tPrevWatering=0, tPrevNutADose=0, tPrevNutBDose=0;
+uint64_t tPrevSample=0, tPrevSensorUpdate=0, tPrevBlynkUpdate=0;
 #define PIN_SPI_CS 5 // The ESP32 pin GPIO5
 #define DS3231_I2C_ADDRESS 0x68 // Dirección del módulo RTC
 #define COUNT(x) sizeof(x)/sizeof(*x)                   // Macro para contar el numero de elementos de un array 
@@ -84,7 +91,7 @@ bool NutA_LVL=0;
 bool NutB_LVL=0;
 bool LowNutSol=0;
 byte LastScreen=0;
-byte LightLevel=3;
+byte LightLevel=0;
 byte water_LVL=0;
 byte iARROW     = 0;                              // ID icono flecha
 byte bARROW[]   = {                               // Bits icono flecha
@@ -141,21 +148,21 @@ const byte imenu1 = COUNT(txmenu1);                       // Numero de items/opc
 /* ESTRUCTURAS MEMORIA */
 struct MYCONFIG{    // Estructura con la configuración que se almacenaran en la memoria SD
     int initialized;
-    int minTDS;
-    int maxTDS;
-    int WateringPeriod;
-    int WateringDutyCicle;
-    int NutADose;
-    int NutBDose;
-    int DosingPeriod;
-    int DatalogPeriod;
-    int Brightness;
-    int Photoperiod;
-    int DawnTime;
-    int Slave2;
+    int minTDS;                // The minimum TDS allowed in the nutrient solution
+    int maxTDS;               // The maximum TDS allowed in the nutrient solution
+    int WateringPeriod;      // The time period of the water pump action
+    int WateringDutyCicle;  // Ratio on which the water pump is ON in a period
+    int NutADose;          // Volume of nutrient A in each dose 
+    int NutBDose;         // Volume of nutrient B in each dose
+    int DosingPeriod;    // The time period that the peristatic pumps waits after dosing
+    int DatalogPeriod;  // The time period for each datalog in the SD
+    int Brightness;    // Config for the backlight of the LCD
+    int Photoperiod;  // The time that the crop need to be in a luminous environment
+    int DawnTime;    // Hour where the photoperiod of the day starts (and the day in daycounter)
+    int Slave2;     // Config for the availability of the second slave device
 };
 struct MYVALUES{   // Estructura con las variables que se almacenaran en la memoria SD
-  int Daycounter;
+  int Daycounter; // Days transcurred in the current 
   int LightTime;
   int CurrentDay;
 };
@@ -167,10 +174,20 @@ memory;
 const char* ConfigFilename = "/config.txt"; //<- SD library uses 8.3 filenames
 
 
-// Sensor variables:
+// Sensor variables
+
 float temperature, humidity;
 float TDS, pH, WaterTemp, LDR;
-
+#define SCOUNT 20 // sum of sample point
+#define BCOEFF  3380 //B-constante: 3380K -/+ 1% 
+#define SERIESRESISTOR 10000 // Resistencia en serie con el termistor
+#define THERMISTORNOMINAL 10000 // Resistencia nominal del sensor NTC
+#define TEMPERATURENOMINAL 25.0
+int analogBufferTDS[SCOUNT]; //Buffer para las medidas de TDS
+int analogBufferpH[SCOUNT]; // Buffer para las medidas de pH
+int analogBufferNTC[SCOUNT]; // Buffer para las medidas del termistor NTC sumergible
+int analogBufferTemp[SCOUNT];
+int analogBufferIndex = 0,copyIndex = 0;
 
 // Generic variables
 int i=0;
@@ -186,6 +203,8 @@ DHT my_sensor(33, DHT22);
 RTC_DS3231 rtc;
 WiFiManager wm;
 File DataFile;
+Adafruit_ADS1115 ADC1;
+Adafruit_ADS1115 ADC2;
 /**  
  *  Rutina de interrupción del botón incorporado en el encoder
  */
@@ -262,6 +281,7 @@ void DATALOG(){
   if((tNow-tPrevLog) >= (memory.d.DatalogPeriod*min_2_us) ){ 
    DataFile = SD.open("/DATALOG.csv", FILE_WRITE);
     if (DataFile) {
+      if(DataFile.size()==0)DataFile.println("Date,Hour,Day,AmbTemp,AmbRH,WaterTemp,TDS,pH,LightLevel,WaterPump,NutAPump,NutBPump,GrowLight");
       DataFile.seek(DataFile.size());
       DataFile.print(GetDate());
       DataFile.print(",");
@@ -490,7 +510,7 @@ void openSubMenu( byte menuID, Screen screen, int *value, int minValue, int maxV
             else if( screen == Screen::Flag1 )
             {
                 lcd.setCursor(1, 1);
-                lcd.print(*value == 0 ? "        YES       " : "         NO       ");
+                lcd.print(*value == 1 ? "        YES       " : "         NO       ");
             }
             else if( screen == Screen::Number )
             {
@@ -796,6 +816,8 @@ void setup() {
 
   // Carga la configuracion de la SD, y la configura la primera vez:
   loadConfig();
+  // Carga los valores almacenados en la SD
+  loadValues();
 
   lcd.print(".");
   i++;
@@ -861,6 +883,26 @@ void setup() {
     i++;
     delay(150);
   }
+  lcd.print(".");
+  i++;
+  delay(150);
+  
+  Blynk.config(BLYNK_AUTH_TOKEN); //Una vez conectado a WiFi se conecta a Blynk
+  Blynk.connect(); 
+  lcd.print(".");
+  i++;
+  delay(150);
+
+  ADC1.setGain(GAIN_ONE); // +/- 4.096V  1 bit = 0.125mV 
+  ADC2.setGain(GAIN_ONE);
+  //float adc_resolution = 65536.0; // 16 bits
+  
+  if(!ADC1.begin(0x48)) sys_error3=true;                // Iniciar el ADS1115
+  if(memory.d.Slave2 && !ADC2.begin(0x49)) sys_error3=true; 
+
+  lcd.print(".");
+  i++;
+  delay(150);
 
   for(i; i<20;i++)    {
         lcd.print(".");
@@ -877,7 +919,7 @@ void MainScreen(){
   tPrevLCDUpdate=tNow;
   switch (memory.d.Brightness){
   case 0: lcd.noBacklight(); break;
-  case 1: if(LightLevel<=3||EncoderTurn){lcd.backlight();EncoderTurn=false;} else lcd.noBacklight(); break;
+  case 1: if(LightLevel<=2||EncoderTurn){lcd.backlight();EncoderTurn=false;} else lcd.noBacklight(); break;
   case 2: lcd.backlight(); break;
   }
   if(memory.d.Slave2){
@@ -955,9 +997,10 @@ void MainScreen(){
     lcd.setCursor(11,2); lcd.print("pH:"); lcd.print(pH);
     lcd.setCursor(0,3); lcd.print("Light Level:");
     switch(LightLevel){
-    case 1:lcd.setCursor(13,3); lcd.print("Dark  ");
-    case 2:lcd.setCursor(13,3); lcd.print("Dim   ");
-    case 3:lcd.setCursor(13,3); lcd.print("Bright");
+    case 0:lcd.setCursor(12,3); lcd.print("Dark    ");
+    case 1:lcd.setCursor(12,3); lcd.print("Dim     ");
+    case 2:lcd.setCursor(12,3); lcd.print("Bright  ");
+    case 3:lcd.setCursor(12,3); lcd.print("Sunlight");
     }
     LastScreen=3;
   }
@@ -1042,7 +1085,7 @@ void GrowLight(){
     memory.v.CurrentDay=now.day();
     saveValues();
   }
-  if(LightLevel<3 && memory.v.LightTime<memory.d.Photoperiod && !GrowLight_is_active){
+  if(LightLevel<2 && memory.v.LightTime<memory.d.Photoperiod && !GrowLight_is_active){
     GrowLight_is_active=true;
     I2C_PIN1.digitalWrite(P3,HIGH); 
   }
@@ -1051,28 +1094,126 @@ void GrowLight(){
     I2C_PIN1.digitalWrite(P3,LOW);
   }
 }
-
-
-void Sensors(){
-  if(I2C_PIN1.digitalRead(P4) && I2C_PIN1.digitalRead(P5)) water_LVL=2;
-  else if(I2C_PIN1.digitalRead(P5)) water_LVL=1;
-  else water_LVL=0;
-  if(I2C_PIN1.digitalRead(P6))NutA_LVL=1;
-  if(I2C_PIN1.digitalRead(P7))NutB_LVL=1;
-  temperature= my_sensor.readTemperature();
-  humidity = my_sensor.readHumidity();
-  //ADS1115 (ADDR: 0x48(GND)/0x49/(VCC))
-  //WaterTemp
-  //TDS (corrected with WaterTemp)
-  if(TDS<(memory.d.minTDS+((memory.d.maxTDS-memory.d.minTDS)/2))) LowNutSol=true;
-  else LowNutSol=false;
-  //pH
-  //LDR
-  
+/**
+ * Median filter algorithm (bubble algorithm) implementation in the TDS probe example code by dfrobot:
+ * https://wiki.dfrobot.com/Gravity__Analog_TDS_Sensor___Meter_For_Arduino_SKU__SEN0244
+ */
+int getMedianNum(int bArray[], int iFilterLen) {
+    int bTab[iFilterLen];
+    // Copia los elementos de bArray a bTab
+    for (byte i = 0; i < iFilterLen; i++)
+        bTab[i] = bArray[i];
+    
+    int i, j, bTemp;
+    // Ordena la matriz bTab
+    for (j = 0; j < iFilterLen - 1; j++) {
+        for (i = 0; i < iFilterLen - j - 1; i++) {
+            if (bTab[i] > bTab[i + 1]) {
+                // Intercambia los elementos si están en el orden incorrecto
+                bTemp = bTab[i];
+                bTab[i] = bTab[i + 1];
+                bTab[i + 1] = bTemp;
+            }
+        }
+    }
+    // Calcula la mediana
+    if ((iFilterLen & 1) > 0)
+        // Longitud impar: toma el valor medio
+        bTemp = bTab[(iFilterLen - 1) / 2];
+    else
+        // Longitud par: toma el promedio de los dos valores medios
+        bTemp = (bTab[iFilterLen / 2] + bTab[iFilterLen / 2 - 1]) / 2;
+    
+    // Devuelve la mediana
+    return bTemp;
 }
-
+/**
+ * Return the average of the array elements 
+ */
+int avgArray(int Array[],int size){ 
+  int temp=0;
+  for(i=0; i<size; i++){
+    temp+=Array[i];
+  }
+  temp=temp/size;
+  return temp;
+}
+void Sensors(){
+  float factorEscala = 0.125; // El factor de escala del ADC es de 0,125mV
+   if(tNow-tPrevSample > 50000)     //every 50 milliseconds,read the analog sample from the ADC
+   {
+     tPrevSample=tNow;
+     analogBufferTDS[analogBufferIndex] = ADC1.readADC_SingleEnded(0);    //Lectura del pin A0 del ADS1115 correspondiente al sensor TDS
+     analogBufferpH[analogBufferIndex] = ADC1.readADC_SingleEnded(1);    //Lectura del pin A1 del ADS1115 correspondiente al sensor pH
+     analogBufferNTC[analogBufferIndex]= ADC1.readADC_SingleEnded(2);    //Lectura del pin A2 del ADS1115 correspondiente al sensor NTC
+     analogBufferIndex++;
+     if(analogBufferIndex == SCOUNT) 
+         analogBufferIndex = 0;
+   }
+   if(tNow-tPrevSensorUpdate > 1000000) { // Every 1 second update the sensors value
+      tPrevSensorUpdate=tNow;
+    /* DIGITAL SENSORS*/
+      if(I2C_PIN1.digitalRead(P4) && I2C_PIN1.digitalRead(P5)) water_LVL=2;
+      else if(I2C_PIN1.digitalRead(P5)) water_LVL=1;
+      else water_LVL=0;
+      if(I2C_PIN1.digitalRead(P6))NutA_LVL=1;
+      if(I2C_PIN1.digitalRead(P7))NutB_LVL=1;
+      temperature= my_sensor.readTemperature();
+      humidity = my_sensor.readHumidity();
+    /* ANALOG SENSORS*/
+    //WaterTemp
+    float R4_mV=factorEscala*avgArray(analogBufferNTC,SCOUNT);
+    float NTC_mV=3300-R4_mV;
+    float NTC_Ohm= SERIESRESISTOR*(NTC_mV-R4_mV);
+    //Symplified Steinhart-Hart equation (B parameter equation) 
+    WaterTemp = NTC_Ohm / THERMISTORNOMINAL;     // (R/Ro)
+    WaterTemp = log(WaterTemp);                  // ln(R/Ro)
+    WaterTemp /= BCOEFF;                   // 1/B * ln(R/Ro)
+    WaterTemp += 1.0 / (TEMPERATURENOMINAL + 273.15); // + (1/To)
+    WaterTemp = 1.0 / WaterTemp;                 // Invert
+    WaterTemp -= 273.15;                         // convert absolute temp to C    
+    //TDS (corrected with WaterTemp)
+    for(copyIndex=0;copyIndex<SCOUNT;copyIndex++)
+     analogBufferTemp[copyIndex]= analogBufferTDS[copyIndex];
+    float filtVoltage = getMedianNum(analogBufferTemp,SCOUNT) *factorEscala/1000 ; // read the analog value more stable by the median filtering algorithm, and convert to voltage value
+    float compensationCoefficient=1.0+0.02*(WaterTemp-25.0); //temperature compensation formula: fFinalResult(25^C) = fFinalResult(current)/(1.0+0.02*(fTP-25.0));
+    float compensationVoltage=filtVoltage/compensationCoefficient; //temperature compensation
+    TDS=(133.42*compensationVoltage*compensationVoltage*compensationVoltage - 255.86*compensationVoltage*compensationVoltage + 857.39*compensationVoltage)*0.5; //convert voltage value to tds value
+    if(TDS<(memory.d.minTDS+((memory.d.maxTDS-memory.d.minTDS)/2))) LowNutSol=true;
+    else LowNutSol=false;
+    //LDR (only 1 measurement per second because of its response time)
+    float R5_mV=(ADC1.readADC_SingleEnded(3)*factorEscala);
+    float LDR_mV=3300-R5_mV;
+    float R5=3.3; // resistencia en serie con el LDR
+    float LDR_kOhm=R5*(LDR_mV/R5_mV);
+    if (LDR_kOhm>=10.0)    LightLevel=0;
+    else if (LDR_kOhm>=1.5)LightLevel=1;
+    else if (LDR_kOhm>=0.5)LightLevel=2;
+    else if (LDR_kOhm>=0.1)LightLevel=3;
+    //pH
+    for(copyIndex=0;copyIndex<SCOUNT;copyIndex++)
+     analogBufferTemp[copyIndex]= analogBufferTDS[copyIndex];
+    filtVoltage = getMedianNum(analogBufferTemp,SCOUNT)*factorEscala/1000 ; // read the analog value more stable by the median filtering algorithm, and convert to voltage value
+    pH=7 + ((1.66 - filtVoltage) / 0.18); // The pH sensor voltage range is reduced from [0V,+5V] to [0V,+3V3] via voltage divider
+   }  
+}
+void BlynkUpdate(){
+  
+  if((tNow-tPrevBlynkUpdate)>1000000){ //Cada segundo
+    Blynk.run();
+    // You can send any value at any time.
+    // Please don't send more that 10 values per second.
+    Blynk.virtualWrite(V0, temperature);
+    Blynk.virtualWrite(V1, humidity);
+    Blynk.virtualWrite(V2, TDS);  
+    Blynk.virtualWrite(V3, pH);
+    if(water_LVL==0)Blynk.logEvent("water_level_low");
+    if(NutA_LVL==0)Blynk.logEvent("nut_a_level_low");
+    if(NutB_LVL==0)Blynk.logEvent("nut_b_level_low");
+  }
+}
 void loop(){
-
+  tNow=esp_timer_get_time(); //Resolución 1us limite: +200 años vs millis() cuyo limite es 50 días
   if(WiFi.status() != WL_CONNECTED)
   {
     wm.process();
@@ -1086,12 +1227,10 @@ void loop(){
     ButtonInterruption = false;
   }
   else MainScreen();
-  tNow=esp_timer_get_time(); //Resolución 1us limite: +200 años vs millis() cuyo limite es 50 días
   WaterPump();
   NutrientPumps();
   GrowLight();
   Sensors();
   DATALOG();
-  //Blynk
-
+  BlynkUpdate();
 }
