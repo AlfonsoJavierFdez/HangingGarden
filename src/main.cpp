@@ -40,8 +40,8 @@
 #include <WiFi.h>
 #include "Adafruit_Sensor.h"        // https://github.com/adafruit/Adafruit_Sensor
 #include "DHT.h"                  // https://github.com/adafruit/DHT-sensor-library
-#include "RTClib.h"              // https://github.com/adafruit/RTClib.git
-#include "ADS1X15.h"            //https://github.com/chrissbarr/ADS1X15?utm_source=platformio&utm_medium=piohome
+#include "RTClib.h"              // https://github.com/adafruit/RTClib
+#include "ADS1X15.h"            // https://github.com/chrissbarr/ADS1X15
 #include "LiquidCrystal_I2C.h" // https://github.com/marcoschwartz/LiquidCrystal_I2C
 #include "PCF8574.h"          // https://github.com/xreef/PCF8574_library
 #include "WiFiManager.h"     // https://github.com/tzapu/WiFiManager
@@ -86,14 +86,14 @@ bool NutAPump_is_running =  false;
 bool NutBPump_is_running =  false;
 bool NutAPump_is_waiting =  false;
 bool NutBPump_is_waiting =  false;
-bool GrowLight_is_active =  false;
-bool NutA_LVL=0;
-bool NutB_LVL=0;
-bool LowNutSol=0;
-byte LastScreen=0;
-byte LastSensor=0;
-byte LightLevel=0;
-byte water_LVL=0;
+bool GrowLight_is_active =  false; 
+bool NutA_LVL=false;     // true-> Nivel de nutriente A por encima del mínimo
+bool NutB_LVL=false;    // true-> Nivel de nutriente B por encima del mínimo
+bool LowNutSol=false;  // true-> Valor de particulas en suspensión (nutrientes) por debajo del requerido
+byte LastScreen=0;    // Almacena el ID de la última pantalla mostrada en la pantalla principal
+byte LastSensor=0;   // Almacena el ID del último sensor analógico del que se ha recivido una muestra
+byte LightLevel=0;  // Nivel de luz medido en el LDR (0-3) donde 3 es luz solar, 2 luz elevada, 1 luz tenue y 0 oscuridad
+byte water_LVL=0;  // '0-> Nivel por debajo del mínimo, 1-> Nivel medio, 2-> Nivel alto
 byte iARROW     = 0;                              // ID icono flecha
 byte bARROW[]   = {                               // Bits icono flecha
   0x00,
@@ -111,7 +111,6 @@ enum Screen{ Menu1, Flag,Flag1, Number }; // Enumerador con los distintos tipos 
 const char *txmenu[] = {        // Los textos del menu principal, la longitud maxima = columnsLCD-1, rellenar caracteres sobrantes con espacios.
     "Change Date/Hour   ",
     "min TDS            ",
-    "max TDS            ",
     "Watering period    ",
     "Watering duty cycle",
     "Nutrient A dose    ",
@@ -150,7 +149,6 @@ const byte imenu1 = COUNT(txmenu1);                       // Numero de items/opc
 struct MYCONFIG{    // Estructura con la configuración que se almacenaran en la memoria SD
     int initialized;
     int minTDS;                // The minimum TDS allowed in the nutrient solution
-    int maxTDS;               // The maximum TDS allowed in the nutrient solution
     int WateringPeriod;      // The time period of the water pump action
     int WateringDutyCicle;  // Ratio on which the water pump is ON in a period
     int NutADose;          // Volume of nutrient A in each dose 
@@ -339,7 +337,6 @@ void saveConfig(){
   JsonDocument doc;
   // Set the values in the document
   doc["minTDS"]=memory.d.minTDS;
-  doc["maxTDS"]=memory.d.maxTDS;
   doc["WateringPeriod"]=memory.d.WateringPeriod;
   doc["WateringDutyCycle"]=memory.d.WateringDutyCicle;
   doc["NutADose"]=memory.d.NutADose;
@@ -375,8 +372,7 @@ void loadConfig(){
     if (error){
       Serial.println(F("Failed to read file, using default configuration"));
       memory.d.initialized=1;
-      memory.d.minTDS=750;
-      memory.d.maxTDS=1500;
+      memory.d.minTDS=550;
       memory.d.WateringPeriod=10;
       memory.d.WateringDutyCicle=10;
       memory.d.NutADose=30;
@@ -390,7 +386,6 @@ void loadConfig(){
     }
     memory.d.initialized=1;
     memory.d.minTDS=doc["minTDS"];
-    memory.d.maxTDS=doc["maxTDS"];
     memory.d.WateringPeriod=doc["WateringPeriod"];
     memory.d.WateringDutyCicle=doc["WateringDutyCycle"];
     memory.d.NutADose=doc["NutADose"];
@@ -520,11 +515,11 @@ void openSubMenu( byte menuID, Screen screen, int *value, int minValue, int maxV
                 lcd.print(*value);
                 lcd.print(" ");
                 lcd.setCursor(columnsLCD-3,2);
-                if(menuID==1||menuID==2) lcd.print("ppm");
-                if(menuID==3||menuID==7||menuID==8) lcd.print("min");
-                if(menuID==4) lcd.print("%  ");
-                if(menuID==5||menuID==6) lcd.print("ml ");
-                if(menuID==10) lcd.print("h  ");
+                if(menuID==1) lcd.print("ppm");
+                if(menuID==2||menuID==6||menuID==7) lcd.print("min");
+                if(menuID==3) lcd.print("%  ");
+                if(menuID==4||menuID==5) lcd.print("ml ");
+                if(menuID==9) lcd.print("h  ");
 
             }
         }
@@ -702,21 +697,20 @@ void openMenu()
           switch( idxMenu )
             {
                 case 0: openRTCMenu();   break; // Menú Hora
-                case 1: openSubMenu( idxMenu, Screen::Number, &memory.d.minTDS,    550, 2500, 50         ); break;
-                case 2: openSubMenu( idxMenu, Screen::Number, &memory.d.maxTDS,    850, 3500, 50       ); break;
-                case 3: openSubMenu( idxMenu, Screen::Number,   &memory.d.WateringPeriod, 0, 120, 5      ); break;
-                case 4: openSubMenu( idxMenu, Screen::Number,   &memory.d.WateringDutyCicle, 5, 100, 5  ); break;
-                case 5: openSubMenu( idxMenu, Screen::Number,  &memory.d.NutADose,       0, 100, 5      ); break;
-                case 6: openSubMenu( idxMenu, Screen::Number, &memory.d.NutBDose,        0, 100, 5      ); break;
-                case 7: openSubMenu( idxMenu, Screen::Number, &memory.d.DosingPeriod,    5, 120, 5      ); break;
-                case 8: openSubMenu( idxMenu, Screen::Number, &memory.d.DatalogPeriod,   1, 60, 1       ); break;
-                case 9: openSubMenu( idxMenu, Screen::Menu1, &memory.d.Brightness,       0, 2, 1        ); break;
-                case 10: openSubMenu( idxMenu, Screen::Number, &memory.d.Photoperiod,    0, 24, 1       ); break;
-                case 11: openSubMenu( idxMenu, Screen::Number, &memory.d.DawnTime,       1, 24, 1       ); break;
-                case 12: openSubMenu( idxMenu, Screen::Flag, &memory.d.Slave2,           0, 1, 1        ); break;
-                case 13: openSubMenu(idxMenu, Screen::Flag1, &memory.v.Daycounter,    1, memory.v.Daycounter,(memory.v.Daycounter-1) ); break;
-                case 14:  exitMenu = true; saveConfig(); saveValues(); break;   //Salir y guardar
-                case 15:  exitMenu = true; loadConfig(); loadValues(); break;                //Salir y cancelar cambios
+                case 1: openSubMenu( idxMenu, Screen::Number, &memory.d.minTDS,    0, 1000, 50         ); break;
+                case 2: openSubMenu( idxMenu, Screen::Number,   &memory.d.WateringPeriod, 0, 120, 5      ); break;
+                case 3: openSubMenu( idxMenu, Screen::Number,   &memory.d.WateringDutyCicle, 5, 100, 5  ); break;
+                case 4: openSubMenu( idxMenu, Screen::Number,  &memory.d.NutADose,       0, 100, 5      ); break;
+                case 5: openSubMenu( idxMenu, Screen::Number, &memory.d.NutBDose,        0, 100, 5      ); break;
+                case 6: openSubMenu( idxMenu, Screen::Number, &memory.d.DosingPeriod,    5, 120, 5      ); break;
+                case 7: openSubMenu( idxMenu, Screen::Number, &memory.d.DatalogPeriod,   1, 60, 1       ); break;
+                case 8: openSubMenu( idxMenu, Screen::Menu1, &memory.d.Brightness,       0, 2, 1        ); break;
+                case 9: openSubMenu( idxMenu, Screen::Number, &memory.d.Photoperiod,    0, 24, 1       ); break;
+                case 10: openSubMenu( idxMenu, Screen::Number, &memory.d.DawnTime,       1, 24, 1       ); break;
+                case 11: openSubMenu( idxMenu, Screen::Flag, &memory.d.Slave2,           0, 1, 1        ); break;
+                case 12: openSubMenu(idxMenu, Screen::Flag1, &memory.v.Daycounter,    1, memory.v.Daycounter,(memory.v.Daycounter-1) ); break;
+                case 13:  exitMenu = true; saveConfig(); saveValues(); break;   //Salir y guardar
+                case 14:  exitMenu = true; loadConfig(); loadValues(); break;                //Salir y cancelar cambios
             }
             forcePrint = true;
         }
@@ -978,9 +972,9 @@ void MainScreen(){
     if(memory.d.Slave2){}
     else{
       lcd.setCursor(0,2); lcd.print("Nut A:");
-      lcd.setCursor(6,2); lcd.print(NutA_LVL==1? "OK ":"LOW");
+      lcd.setCursor(6,2); lcd.print(NutA_LVL==true? "OK ":"LOW");
       lcd.setCursor(11,2);lcd.print("Nut B:");
-      lcd.setCursor(17,2); lcd.print(NutB_LVL==1? "OK":"LOW"); 
+      lcd.setCursor(17,2); lcd.print(NutB_LVL==true? "OK":"LOW"); 
       lcd.setCursor(0,3); 
       if(water_LVL==2)lcd.print(" Water Level: High  ");
       if(water_LVL==1)lcd.print(" Water Level: Mid   ");
@@ -1043,7 +1037,7 @@ void NutrientPumps(){
   // Lógica de la bomba peristáltica del nutriente A
   if((tNow-tPrevNutADose)>= (memory.d.NutADose*(1/Nut_flow_rate)*min_2_us) && !NutAPump_is_waiting){
       if(!NutAPump_is_running && LowNutSol){
-        if(NutA_LVL!=0){
+        if(NutA_LVL){
           NutAPump_is_running=true;
           I2C_PIN1.digitalWrite(P0,HIGH);
           tPrevNutADose=tNow;
@@ -1060,7 +1054,7 @@ void NutrientPumps(){
     // Lógica de la bomba peristáltica del nutriente B
     if((tNow-tPrevNutBDose)>= (memory.d.NutBDose*(1/Nut_flow_rate)*min_2_us) && !NutBPump_is_waiting){
       if(!NutBPump_is_running && LowNutSol){
-        if(NutB_LVL!=0){
+        if(NutB_LVL){
           NutBPump_is_running=true;
           I2C_PIN1.digitalWrite(P1,HIGH);
           tPrevNutBDose=tNow;
@@ -1180,7 +1174,7 @@ void Sensors(){
       break;
       }
     }
-    else sys_error2=1;
+    else sys_error2=true;
    }
    if(tNow-tPrevSensorUpdate > 2000000) { // Every 2 seconds update the sensors value
       tPrevSensorUpdate=tNow;
@@ -1188,45 +1182,45 @@ void Sensors(){
       if(I2C_PIN1.digitalRead(P4) && I2C_PIN1.digitalRead(P5)) water_LVL=2;
       else if(I2C_PIN1.digitalRead(P5)) water_LVL=1;
       else water_LVL=0;
-      if(I2C_PIN1.digitalRead(P6))NutA_LVL=1;
-      if(I2C_PIN1.digitalRead(P7))NutB_LVL=1;
+      if(I2C_PIN1.digitalRead(P6))NutA_LVL=true;
+      if(I2C_PIN1.digitalRead(P7))NutB_LVL=true;
       temperature= my_sensor.readTemperature();
       humidity = my_sensor.readHumidity();
     /* ANALOG SENSORS*/
-    //WaterTemp
-    float R4_mV=factorEscala*avgArray(analogBufferNTC,SCOUNT);
-    float NTC_mV=3300-R4_mV;
-    float NTC_Ohm= SERIESRESISTOR*(NTC_mV-R4_mV);
-    //Symplified Steinhart-Hart equation (B parameter equation) 
-    WaterTemp = NTC_Ohm / THERMISTORNOMINAL;     // (R/Ro)
-    WaterTemp = log(WaterTemp);                  // ln(R/Ro)
-    WaterTemp /= BCOEFF;                   // 1/B * ln(R/Ro)
-    WaterTemp += 1.0 / (TEMPERATURENOMINAL + 273.15); // + (1/To)
-    WaterTemp = 1.0 / WaterTemp;                 // Invert
-    WaterTemp -= 273.15;                         // convert absolute temp to C    
-    //TDS (corrected with WaterTemp)
-    for(copyIndex=0;copyIndex<SCOUNT;copyIndex++)
-     analogBufferTemp[copyIndex]= analogBufferTDS[copyIndex];
-    float filtVoltage = getMedianNum(analogBufferTemp,SCOUNT) *factorEscala/1000 ; // read the analog value more stable by the median filtering algorithm, and convert to voltage value
-    float compensationCoefficient=1.0+0.02*(WaterTemp-25.0); //temperature compensation formula: fFinalResult(25^C) = fFinalResult(current)/(1.0+0.02*(fTP-25.0));
-    float compensationVoltage=filtVoltage/compensationCoefficient; //temperature compensation
-    TDS=(133.42*compensationVoltage*compensationVoltage*compensationVoltage - 255.86*compensationVoltage*compensationVoltage + 857.39*compensationVoltage)*0.5; //convert voltage value to tds value
-    if(TDS<(memory.d.minTDS+((memory.d.maxTDS-memory.d.minTDS)/2))) LowNutSol=true;
-    else LowNutSol=false;
-    //LDR (only 1 measurement per second because of its response time)
-    float R5_mV=factorEscala*avgArray(analogBufferLDR,SCOUNT);
-    float LDR_mV=3300-R5_mV;
-    float R5=3.3; // resistencia en serie con el LDR
-    float LDR_kOhm=R5*(LDR_mV/R5_mV);
-    if (LDR_kOhm>=10.0)    LightLevel=0;
-    else if (LDR_kOhm>=1.5)LightLevel=1;
-    else if (LDR_kOhm>=0.5)LightLevel=2;
-    else if (LDR_kOhm>=0.1)LightLevel=3;
-    //pH
-    for(copyIndex=0;copyIndex<SCOUNT;copyIndex++)
-     analogBufferTemp[copyIndex]= analogBufferTDS[copyIndex];
-    filtVoltage = getMedianNum(analogBufferTemp,SCOUNT)*factorEscala/1000 ; // read the analog value more stable by the median filtering algorithm, and convert to voltage value
-    pH=7 + ((1.66 - filtVoltage) / 0.18); // The pH sensor voltage range is reduced from [0V,+5V] to [0V,+3V3] via voltage divider
+      //WaterTemp
+      float R4_mV=factorEscala*avgArray(analogBufferNTC,SCOUNT);
+      float NTC_mV=3300-R4_mV;
+      float NTC_Ohm= SERIESRESISTOR*(NTC_mV-R4_mV);
+      //Symplified Steinhart-Hart equation (B parameter equation) 
+      WaterTemp = NTC_Ohm / THERMISTORNOMINAL;     // (R/Ro)
+      WaterTemp = log(WaterTemp);                  // ln(R/Ro)
+      WaterTemp /= BCOEFF;                   // 1/B * ln(R/Ro)
+      WaterTemp += 1.0 / (TEMPERATURENOMINAL + 273.15); // + (1/To)
+      WaterTemp = 1.0 / WaterTemp;                 // Invert
+      WaterTemp -= 273.15;                         // convert absolute temp to C    
+      //TDS (corrected with WaterTemp)
+      for(copyIndex=0;copyIndex<SCOUNT;copyIndex++)
+      analogBufferTemp[copyIndex]= analogBufferTDS[copyIndex];
+      float filtVoltage = getMedianNum(analogBufferTemp,SCOUNT) *factorEscala/1000 ; // read the analog value more stable by the median filtering algorithm, and convert to voltage value
+      float compensationCoefficient=1.0+0.02*(WaterTemp-25.0); //temperature compensation formula: fFinalResult(25^C) = fFinalResult(current)/(1.0+0.02*(fTP-25.0));
+      float compensationVoltage=filtVoltage/compensationCoefficient; //temperature compensation
+      TDS=(133.42*compensationVoltage*compensationVoltage*compensationVoltage - 255.86*compensationVoltage*compensationVoltage + 857.39*compensationVoltage)*0.5; //convert voltage value to tds value
+      if(TDS<memory.d.minTDS) LowNutSol=true;
+      else LowNutSol=false;
+      //LDR (only 1 measurement per second because of its response time)
+      float R5_mV=factorEscala*avgArray(analogBufferLDR,SCOUNT);
+      float LDR_mV=3300-R5_mV;
+      float R5=3.3; // resistencia en serie con el LDR
+      float LDR_kOhm=R5*(LDR_mV/R5_mV);
+      if     (LDR_kOhm>=10.0)LightLevel=0;
+      else if (LDR_kOhm>=1.5)LightLevel=1;
+      else if (LDR_kOhm>=0.5)LightLevel=2;
+      else if (LDR_kOhm>=0.1)LightLevel=3;
+      //pH
+      for(copyIndex=0;copyIndex<SCOUNT;copyIndex++)
+      analogBufferTemp[copyIndex]= analogBufferTDS[copyIndex];
+      filtVoltage = getMedianNum(analogBufferTemp,SCOUNT)*factorEscala/1000 ; // read the analog value more stable by the median filtering algorithm, and convert to voltage value
+      pH=7 + ((1.66 - filtVoltage) / 0.18); // The pH sensor voltage range is reduced from [0V,+5V] to [0V,+3V3] via voltage divider
    }  
 }
 void BlynkUpdate(){
@@ -1240,8 +1234,8 @@ void BlynkUpdate(){
     Blynk.virtualWrite(V2, TDS);  
     Blynk.virtualWrite(V3, pH);
     if(water_LVL==0)Blynk.logEvent("water_level_low");
-    if(NutA_LVL==0)Blynk.logEvent("nut_a_level_low");
-    if(NutB_LVL==0)Blynk.logEvent("nut_b_level_low");
+    if(!NutA_LVL)Blynk.logEvent("nut_a_level_low");
+    if(!NutB_LVL)Blynk.logEvent("nut_b_level_low");
   }
 }
 void loop(){
