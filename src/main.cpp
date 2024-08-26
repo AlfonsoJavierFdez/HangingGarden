@@ -57,6 +57,7 @@
 */
 // Valor de tiempo (en microsegundos)
 uint64_t tNow=0,tPrevLog=0,tPrevLCDUpdate=0,tPrevBtn=0, tPrevWatering=0, tPrevNutADose=0, tPrevNutBDose=0;
+uint64_t tPrevNutA2Dose=0, tPrevNutB2Dose=0;
 uint64_t tPrevSample=0, tPrevSensorUpdate=0, tPrevBlynkUpdate=0;
 #define PIN_SPI_CS 5 // The ESP32 pin GPIO5
 #define DS3231_I2C_ADDRESS 0x68 // Dirección del módulo RTC
@@ -82,18 +83,18 @@ bool lastButtonState = LOW;           // the previous reading from the input pin
 unsigned long lastDebounceTime = 0;  // the last time the output pin was toggled
 volatile bool ButtonInterruption = false;
 bool WaterPump_is_running = false;
-bool NutAPump_is_running =  false;
-bool NutBPump_is_running =  false;
-bool NutAPump_is_waiting =  false;
-bool NutBPump_is_waiting =  false;
-bool GrowLight_is_active =  false; 
-bool NutA_LVL=false;     // true-> Nivel de nutriente A por encima del mínimo
-bool NutB_LVL=false;    // true-> Nivel de nutriente B por encima del mínimo
-bool LowNutSol=false;  // true-> Valor de particulas en suspensión (nutrientes) por debajo del requerido
+bool NutAPump_is_running =  false,NutAPump2_is_running =  false;
+bool NutBPump_is_running =  false,NutBPump2_is_running =  false;
+bool NutAPump_is_waiting =  false,NutAPump2_is_waiting =  false;
+bool NutBPump_is_waiting =  false,NutBPump2_is_waiting =  false;
+bool GrowLight_is_active =  false,GrowLight2_is_active =  false; 
+bool NutA_LVL=false,NutA_LVL2=false;     // true-> Nivel de nutriente A por encima del mínimo
+bool NutB_LVL=false,NutB_LVL2=false;    // true-> Nivel de nutriente B por encima del mínimo
+bool LowNutSol=false,LowNutSol2=false;  // true-> Valor de particulas en suspensión (nutrientes) por debajo del requerido
 byte LastScreen=0;    // Almacena el ID de la última pantalla mostrada en la pantalla principal
-byte LastSensor=0;   // Almacena el ID del último sensor analógico del que se ha recivido una muestra
-byte LightLevel=0;  // Nivel de luz medido en el LDR (0-3) donde 3 es luz solar, 2 luz elevada, 1 luz tenue y 0 oscuridad
-byte water_LVL=0;  // '0-> Nivel por debajo del mínimo, 1-> Nivel medio, 2-> Nivel alto
+byte LastSensor=0,LastSensor2=0;   // Almacena el ID del último sensor analógico del que se ha recivido una muestra
+byte LightLevel=0,LightLevel2=0;  // Nivel de luz medido en el LDR (0-3) donde 3 es luz solar, 2 luz elevada, 1 luz tenue y 0 oscuridad
+byte water_LVL=0,water_LVL2=0;  // '0-> Nivel por debajo del mínimo, 1-> Nivel medio, 2-> Nivel alto
 byte iARROW     = 0;                              // ID icono flecha
 byte bARROW[]   = {                               // Bits icono flecha
   0x00,
@@ -177,18 +178,19 @@ const char* ConfigFilename = "/config.txt"; //<- SD library uses 8.3 filenames
 
 float temperature, humidity;
 float TDS, pH, WaterTemp, LDR;
+float TDS2, pH2, WaterTemp2, LDR2;
 #define SCOUNT 20 // sum of sample point
 #define BCOEFF  3380 //B-constante: 3380K -/+ 1% 
 #define SERIESRESISTOR 10000 // Resistencia en serie con el termistor
 #define THERMISTORNOMINAL 10000 // Resistencia nominal del sensor NTC
 #define TEMPERATURENOMINAL 25.0
-int analogBufferTDS[SCOUNT]; //Buffer para las medidas de TDS
-int analogBufferpH[SCOUNT]; // Buffer para las medidas de pH
-int analogBufferNTC[SCOUNT]; // Buffer para las medidas del termistor NTC sumergible
-int analogBufferLDR[SCOUNT]; // Buffer para las medidas del LDR
-int analogBufferTemp[SCOUNT];
+int analogBufferTDS[SCOUNT], analogBufferTDS2[SCOUNT]; //Buffer para las medidas de TDS
+int analogBufferpH[SCOUNT],  analogBufferpH2[SCOUNT]; // Buffer para las medidas de pH
+int analogBufferNTC[SCOUNT], analogBufferNTC2[SCOUNT]; // Buffer para las medidas del termistor NTC sumergible
+int analogBufferLDR[SCOUNT], analogBufferLDR2[SCOUNT]; // Buffer para las medidas del LDR
+int analogBufferTemp[SCOUNT]; // Buffer temporal para realizar el filtro de mediana
 int analogBufferTDSIndex = 0,analogBufferpHIndex = 0, analogBufferNTCIndex = 0, analogBufferLDRIndex = 0,copyIndex = 0;
-
+int analogBufferTDSIndex2 = 0,analogBufferpHIndex2 = 0, analogBufferNTCIndex2 = 0, analogBufferLDRIndex2 = 0;
 // Generic variables
 int i=0;
 
@@ -313,6 +315,42 @@ void DATALOG(){
     }
     else{
       Serial.println("error opening DATALOG.csv");
+      sys_error2=true;
+    }
+    if(memory.d.Slave2==1)DataFile = SD.open("/DATALOG2.csv", FILE_WRITE);
+    if (DataFile) {
+      if(DataFile.size()==0)DataFile.println("Date,Hour,Day,AmbTemp,AmbRH,WaterTemp,TDS,pH,LightLevel,WaterPump,NutAPump,NutBPump,GrowLight");
+      DataFile.seek(DataFile.size());
+      DataFile.print(GetDate());
+      DataFile.print(",");
+      DataFile.print(GetHour());
+      DataFile.print(",");
+      DataFile.print(memory.v.Daycounter);
+      DataFile.print(",");     
+      DataFile.print(temperature);
+      DataFile.print(",");
+      DataFile.print(humidity);
+      DataFile.print(",");
+      DataFile.print(WaterTemp2);
+      DataFile.print(",");
+      DataFile.print(TDS2);
+      DataFile.print(",");
+      DataFile.print(pH2); 
+      DataFile.print(",");
+      DataFile.print(LightLevel2);
+      DataFile.print(",");
+      DataFile.print(WaterPump_is_running);
+      DataFile.print(",");
+      DataFile.print(NutAPump2_is_running);
+      DataFile.print(",");
+      DataFile.print(NutBPump2_is_running);
+      DataFile.print(",");
+      DataFile.println(GrowLight2_is_active);
+      DataFile.close();
+      tPrevLog=tNow;
+    }
+    else{
+      Serial.println("error opening DATALOG2.csv");
       sys_error2=true;
     }
   }
@@ -798,7 +836,7 @@ void setup() {
   lcd.setCursor(0,3);
   lcd.print(".");
   i++;
-  delay(150);
+  delay(100);
 // Inicialización de la tarjeta SD
   while (!SD.begin(PIN_SPI_CS)) { // SD CARD error
       Serial.println(F("SD CARD FAILED, OR NOT PRESENT!"));
@@ -808,7 +846,7 @@ void setup() {
 
   lcd.print(".");
   i++;
-  delay(150);
+  delay(100);
 
   // Carga la configuracion de la SD, y la configura la primera vez:
   loadConfig();
@@ -817,7 +855,7 @@ void setup() {
 
   lcd.print(".");
   i++;
-  delay(150);
+  delay(100);
  
   I2C_PIN1.pinMode(P0,OUTPUT);
   I2C_PIN1.pinMode(P1,OUTPUT);
@@ -848,7 +886,7 @@ void setup() {
 
  lcd.print(".");
  i++; 
- delay(150);
+ delay(100);
 
   // Configuración del encoder
   pinMode(channelPinA, INPUT_PULLUP);
@@ -858,7 +896,7 @@ void setup() {
 
   lcd.print(".");
   i++;
-  delay(150);
+  delay(100);
 
   WiFi.mode(WIFI_STA); // explicitly set mode, esp defaults to STA+AP
   //WiFiManager, Local intialization. Once its business is done, there is no need to keep it around
@@ -877,20 +915,20 @@ void setup() {
     Serial.println("WiFi Connected");  
     lcd.print(".");
     i++;
-    delay(150);
+    delay(100);
   }
   lcd.print(".");
   i++;
-  delay(150);
+  delay(100);
   
   Blynk.config(BLYNK_AUTH_TOKEN); //Una vez conectado a WiFi se conecta a Blynk
   Blynk.connect(); 
   lcd.print(".");
   i++;
-  delay(150);
+  delay(100);
   
   if(!ADC1.begin()) sys_error3=true;                // Iniciar el ADS1115
-  if(memory.d.Slave2 && !ADC2.begin()) sys_error3=true; 
+  if(memory.d.Slave2==1 && !ADC2.begin()) sys_error3=true; 
 
   ADC1.setGain(1); // +/- 4.096V  1 bit = 0.125mV 
   ADC2.setGain(1);
@@ -899,7 +937,7 @@ void setup() {
 
   lcd.print(".");
   i++;
-  delay(150);
+  delay(100);
 
   for(i; i<20;i++)    {
         lcd.print(".");
@@ -916,10 +954,10 @@ void MainScreen(){
   tPrevLCDUpdate=tNow;
   switch (memory.d.Brightness){
   case 0: lcd.noBacklight(); break;
-  case 1: if(LightLevel<=2||EncoderTurn){lcd.backlight();EncoderTurn=false;} else lcd.noBacklight(); break;
+  case 1: if(EncoderTurn){lcd.backlight();EncoderTurn=false;} else lcd.noBacklight(); break;
   case 2: lcd.backlight(); break;
   }
-  if(memory.d.Slave2){
+  if(memory.d.Slave2==1){
   lcd.setCursor(0,0); lcd.print("                    ");
   lcd.setCursor(0,1); lcd.print("                    ");
   }
@@ -931,7 +969,7 @@ void MainScreen(){
   }
   lcd.setCursor(0,2); lcd.print("                    ");
   lcd.setCursor(0,3); lcd.print("                    ");
-  if(LastScreen==3 && (sys_error1)){
+  if(LastScreen==3 && (sys_error1||sys_error2||sys_error3)){
     i=1;
     lcd.setCursor(0,0); lcd.print("******WARNINGS******");
     if(sys_error1){
@@ -949,7 +987,7 @@ void MainScreen(){
     LastScreen=0;
   }
   else if(LastScreen==3||LastScreen==0){
-    if(memory.d.Slave2){
+    if(memory.d.Slave2==1){
     lcd.setCursor(0,0); lcd.print(" My Hanging Gardens ");
     lcd.setCursor(0,1); lcd.print("        Day:");
     lcd.setCursor(12,1); lcd.print(memory.v.Daycounter);
@@ -969,7 +1007,7 @@ void MainScreen(){
   else if(LastScreen==1){
     //lcd.setCursor(0,0); //Reservado para 2 slave
     //lcd.setCursor(0,1); //Reservado para 2 slave
-    if(memory.d.Slave2){}
+    if(memory.d.Slave2==1){}
     else{
       lcd.setCursor(0,2); lcd.print("Nut A:");
       lcd.setCursor(6,2); lcd.print(NutA_LVL==true? "OK ":"LOW");
@@ -1014,7 +1052,7 @@ void WaterPump(){
         tPrevWatering=tNow;
       } 
       else Serial.println("The Water Level in the device 1 is too low");
-      if(memory.d.Slave2){
+      if(memory.d.Slave2==1){
         if(water_LVL!=0){
           WaterPump_is_running=true;
           I2C_PIN2.digitalWrite(P2,HIGH);
@@ -1028,14 +1066,14 @@ void WaterPump(){
   else if(WaterPump_is_running && (tNow-tPrevWatering)>=((memory.d.WateringPeriod*min_2_us)*(memory.d.WateringDutyCicle/100))){
     WaterPump_is_running=false;
     I2C_PIN1.digitalWrite(P2,LOW);
-    if(memory.d.Slave2) I2C_PIN2.digitalWrite(P2,LOW);  
+    if(memory.d.Slave2==1) I2C_PIN2.digitalWrite(P2,LOW);  
     tPrevWatering=tNow;
   }
 }
 
 void NutrientPumps(){
   // Lógica de la bomba peristáltica del nutriente A
-  if((tNow-tPrevNutADose)>= (memory.d.NutADose*(1/Nut_flow_rate)*min_2_us) && !NutAPump_is_waiting){
+  if(((tNow-tPrevNutADose)>= (memory.d.NutADose*(1/Nut_flow_rate)*min_2_us)) && !NutAPump_is_waiting){
       if(!NutAPump_is_running && LowNutSol){
         if(NutA_LVL){
           NutAPump_is_running=true;
@@ -1051,8 +1089,24 @@ void NutrientPumps(){
         tPrevNutADose=tNow;
       }
     }
+    if((memory.d.Slave2==1)&&((tNow-tPrevNutADose)>= (memory.d.NutADose*(1/Nut_flow_rate)*min_2_us)) && !NutAPump_is_waiting){
+      if(!NutAPump2_is_running && LowNutSol2){
+        if(NutA_LVL2){
+          NutAPump2_is_running=true;
+          I2C_PIN2.digitalWrite(P0,HIGH);
+          tPrevNutA2Dose=tNow;
+        } 
+        else Serial.println("The Nutrient A Level in the device 2 is too low");
+      }
+      if(NutAPump2_is_running){ // Se fija un tiempo en el que la bomba peristáltica está apagada
+        NutAPump2_is_running=false;
+        I2C_PIN2.digitalWrite(P0,LOW);
+        NutAPump2_is_waiting=true;
+        tPrevNutA2Dose=tNow;
+      }
+    }
     // Lógica de la bomba peristáltica del nutriente B
-    if((tNow-tPrevNutBDose)>= (memory.d.NutBDose*(1/Nut_flow_rate)*min_2_us) && !NutBPump_is_waiting){
+    if(((tNow-tPrevNutBDose)>= (memory.d.NutBDose*(1/Nut_flow_rate)*min_2_us)) && !NutBPump_is_waiting){
       if(!NutBPump_is_running && LowNutSol){
         if(NutB_LVL){
           NutBPump_is_running=true;
@@ -1068,9 +1122,30 @@ void NutrientPumps(){
         tPrevNutBDose=tNow;
       }
     }
+    if((memory.d.Slave2==1)&&((tNow-tPrevNutBDose)>= (memory.d.NutBDose*(1/Nut_flow_rate)*min_2_us)) && !NutBPump_is_waiting){
+      if(!NutBPump2_is_running && LowNutSol2){
+        if(NutB_LVL2){
+          NutBPump2_is_running=true;
+          I2C_PIN2.digitalWrite(P1,HIGH);
+          tPrevNutB2Dose=tNow;
+        } 
+        else Serial.println("The Nutrient B Level in the device 2 is too low");
+      }
+      if(NutBPump2_is_running){ // Se fija un tiempo en el que la bomba peristáltica está apagada
+        NutBPump2_is_running=false;
+        I2C_PIN2.digitalWrite(P1,LOW);
+        NutBPump2_is_waiting=true;
+        tPrevNutB2Dose=tNow;
+      }
+    }
+  // Lógica del periodo de espera a la siguiente dosificación
   if((NutAPump_is_waiting && NutBPump_is_waiting) && (tNow-(max(tPrevNutADose,tPrevNutBDose)))>=(memory.d.DosingPeriod*min_2_us)){
       NutAPump_is_waiting=false;
       NutBPump_is_waiting=false;
+  }
+  if((memory.d.Slave2==1)&&(NutAPump2_is_waiting && NutBPump2_is_waiting) && (tNow-(max(tPrevNutA2Dose,tPrevNutB2Dose)))>=(memory.d.DosingPeriod*min_2_us)){
+      NutAPump2_is_waiting=false;
+      NutBPump2_is_waiting=false;
   }
 }
 
@@ -1089,6 +1164,14 @@ void GrowLight(){
   else if(GrowLight_is_active){
     GrowLight_is_active=false;
     I2C_PIN1.digitalWrite(P3,LOW);
+  }
+  if((memory.d.Slave2==1)&&(LightLevel2<2 && memory.v.LightTime<memory.d.Photoperiod) && !GrowLight2_is_active){
+    GrowLight2_is_active=true;
+    I2C_PIN2.digitalWrite(P3,HIGH); 
+  }
+  else if(GrowLight2_is_active){
+    GrowLight2_is_active=false;
+    I2C_PIN2.digitalWrite(P3,LOW);
   }
 }
 /**
@@ -1174,7 +1257,46 @@ void Sensors(){
       break;
       }
     }
-    else sys_error2=true;
+    else sys_error3=true;
+    // Sensores dispositivo esclavo 2
+    if(memory.d.Slave2==1){
+      if(ADC2.isConnected() && ADC2.isReady()){
+        switch(LastSensor)
+        {
+          case 0:
+              analogBufferTDS2[analogBufferTDSIndex2] = ADC2.getValue();    //Lectura del pin A0 del ADS1115 correspondiente al sensor TDS
+              analogBufferTDSIndex2++;
+              if(analogBufferTDSIndex2 == SCOUNT)analogBufferTDSIndex2 = 0;
+              LastSensor2++;
+              ADC2.requestADC(LastSensor2);
+              break;
+          case 1:
+              analogBufferpH2[analogBufferpHIndex2] = ADC2.getValue();    //Lectura del pin A1 del ADS1115 correspondiente al sensor pH
+              analogBufferpHIndex2++;
+              if(analogBufferpHIndex2 == SCOUNT)analogBufferpHIndex2 = 0;
+              LastSensor2++; 
+              ADC2.requestADC(LastSensor2);
+            break;
+          case 2:
+              analogBufferNTC2[analogBufferNTCIndex2]= ADC2.getValue();    //Lectura del pin A2 del ADS1115 correspondiente al sensor NTC
+              analogBufferNTCIndex2++;
+              if(analogBufferNTCIndex2 == SCOUNT)analogBufferNTCIndex2 = 0;
+              LastSensor2++; 
+              ADC2.requestADC(LastSensor2);
+            break;
+          case 3:
+              analogBufferLDR2[analogBufferLDRIndex2]= ADC2.getValue();    //Lectura del pin A2 del ADS1115 correspondiente al sensor NTC
+              analogBufferLDRIndex2++;
+              if(analogBufferLDRIndex2 == SCOUNT)analogBufferLDRIndex2 = 0;
+              LastSensor2=0; 
+              ADC2.requestADC(LastSensor2);
+            break;
+        break;
+        }
+      }
+      else sys_error3=true;
+    }
+    
    }
    if(tNow-tPrevSensorUpdate > 2000000) { // Every 2 seconds update the sensors value
       tPrevSensorUpdate=tNow;
@@ -1182,8 +1304,17 @@ void Sensors(){
       if(I2C_PIN1.digitalRead(P4) && I2C_PIN1.digitalRead(P5)) water_LVL=2;
       else if(I2C_PIN1.digitalRead(P5)) water_LVL=1;
       else water_LVL=0;
+      if(memory.d.Slave2==1){
+        if(I2C_PIN2.digitalRead(P4) && I2C_PIN2.digitalRead(P5)) water_LVL2=2;
+        else if(I2C_PIN2.digitalRead(P5)) water_LVL2=1;
+        else water_LVL2=0;
+      }
       if(I2C_PIN1.digitalRead(P6))NutA_LVL=true;
       if(I2C_PIN1.digitalRead(P7))NutB_LVL=true;
+      if(memory.d.Slave2==1){
+        if(I2C_PIN2.digitalRead(P6))NutA_LVL2=true;
+        if(I2C_PIN2.digitalRead(P7))NutB_LVL2=true;
+      }
       temperature= my_sensor.readTemperature();
       humidity = my_sensor.readHumidity();
     /* ANALOG SENSORS*/
@@ -1191,13 +1322,27 @@ void Sensors(){
       float R4_mV=factorEscala*avgArray(analogBufferNTC,SCOUNT);
       float NTC_mV=3300-R4_mV;
       float NTC_Ohm= SERIESRESISTOR*(NTC_mV-R4_mV);
+      float R4_mV2,NTC_mV2,NTC_Ohm2;
+      if(memory.d.Slave2==1){
+        R4_mV2=factorEscala*avgArray(analogBufferNTC2,SCOUNT);
+        NTC_mV2=3300-R4_mV2;
+        NTC_Ohm2= SERIESRESISTOR*(NTC_mV2-R4_mV2);
+      }
       //Symplified Steinhart-Hart equation (B parameter equation) 
       WaterTemp = NTC_Ohm / THERMISTORNOMINAL;     // (R/Ro)
       WaterTemp = log(WaterTemp);                  // ln(R/Ro)
       WaterTemp /= BCOEFF;                   // 1/B * ln(R/Ro)
       WaterTemp += 1.0 / (TEMPERATURENOMINAL + 273.15); // + (1/To)
       WaterTemp = 1.0 / WaterTemp;                 // Invert
-      WaterTemp -= 273.15;                         // convert absolute temp to C    
+      WaterTemp -= 273.15;                         // convert absolute temp to C
+      if(memory.d.Slave2==1){
+        WaterTemp2 = NTC_Ohm2 / THERMISTORNOMINAL;     // (R/Ro)
+        WaterTemp2 = log(WaterTemp2);                  // ln(R/Ro)
+        WaterTemp2 /= BCOEFF;                   // 1/B * ln(R/Ro)
+        WaterTemp2 += 1.0 / (TEMPERATURENOMINAL + 273.15); // + (1/To)
+        WaterTemp2 = 1.0 / WaterTemp2;                 // Invert
+        WaterTemp2 -= 273.15;                         // convert absolute temp to C
+      }    
       //TDS (corrected with WaterTemp)
       for(copyIndex=0;copyIndex<SCOUNT;copyIndex++)
       analogBufferTemp[copyIndex]= analogBufferTDS[copyIndex];
@@ -1207,7 +1352,17 @@ void Sensors(){
       TDS=(133.42*compensationVoltage*compensationVoltage*compensationVoltage - 255.86*compensationVoltage*compensationVoltage + 857.39*compensationVoltage)*0.5; //convert voltage value to tds value
       if(TDS<memory.d.minTDS) LowNutSol=true;
       else LowNutSol=false;
-      //LDR (only 1 measurement per second because of its response time)
+      if(memory.d.Slave2==1){
+        for(copyIndex=0;copyIndex<SCOUNT;copyIndex++)
+        analogBufferTemp[copyIndex]= analogBufferTDS2[copyIndex];
+        filtVoltage = getMedianNum(analogBufferTemp,SCOUNT) *factorEscala/1000 ; // read the analog value more stable by the median filtering algorithm, and convert to voltage value
+        compensationCoefficient=1.0+0.02*(WaterTemp2-25.0); //temperature compensation formula: fFinalResult(25^C) = fFinalResult(current)/(1.0+0.02*(fTP-25.0));
+        compensationVoltage=filtVoltage/compensationCoefficient; //temperature compensation
+        TDS2=(133.42*compensationVoltage*compensationVoltage*compensationVoltage - 255.86*compensationVoltage*compensationVoltage + 857.39*compensationVoltage)*0.5; //convert voltage value to tds value
+        if(TDS2<memory.d.minTDS) LowNutSol2=true;
+        else LowNutSol2=false;
+      }
+      //LDR 
       float R5_mV=factorEscala*avgArray(analogBufferLDR,SCOUNT);
       float LDR_mV=3300-R5_mV;
       float R5=3.3; // resistencia en serie con el LDR
@@ -1216,11 +1371,27 @@ void Sensors(){
       else if (LDR_kOhm>=1.5)LightLevel=1;
       else if (LDR_kOhm>=0.5)LightLevel=2;
       else if (LDR_kOhm>=0.1)LightLevel=3;
+      if(memory.d.Slave2==1){
+        R5_mV=factorEscala*avgArray(analogBufferLDR2,SCOUNT);
+        LDR_mV=3300-R5_mV;
+        R5=3.3; // resistencia en serie con el LDR
+        LDR_kOhm=R5*(LDR_mV/R5_mV);
+        if     (LDR_kOhm>=10.0)LightLevel2=0;
+        else if (LDR_kOhm>=1.5)LightLevel2=1;
+        else if (LDR_kOhm>=0.5)LightLevel2=2;
+        else if (LDR_kOhm>=0.1)LightLevel2=3;
+      }
       //pH
       for(copyIndex=0;copyIndex<SCOUNT;copyIndex++)
       analogBufferTemp[copyIndex]= analogBufferTDS[copyIndex];
       filtVoltage = getMedianNum(analogBufferTemp,SCOUNT)*factorEscala/1000 ; // read the analog value more stable by the median filtering algorithm, and convert to voltage value
-      pH=7 + ((1.66 - filtVoltage) / 0.18); // The pH sensor voltage range is reduced from [0V,+5V] to [0V,+3V3] via voltage divider
+      pH=7 + ((1.65 - filtVoltage) / 0.24); // The pH sensor voltage range is reduced from [0V,+5V] to [0V,+3V3] via voltage divider
+      if(memory.d.Slave2==1){
+      for(copyIndex=0;copyIndex<SCOUNT;copyIndex++)
+        analogBufferTemp[copyIndex]= analogBufferTDS2[copyIndex];
+        filtVoltage = getMedianNum(analogBufferTemp,SCOUNT)*factorEscala/1000 ; // read the analog value more stable by the median filtering algorithm, and convert to voltage value
+        pH2=7 + ((1.65 - filtVoltage) / 0.24); // The pH sensor voltage range is reduced from [0V,+5V] to [0V,+3V3] via voltage divider
+      }
    }  
 }
 void BlynkUpdate(){
@@ -1236,6 +1407,8 @@ void BlynkUpdate(){
     if(water_LVL==0)Blynk.logEvent("water_level_low");
     if(!NutA_LVL)Blynk.logEvent("nut_a_level_low");
     if(!NutB_LVL)Blynk.logEvent("nut_b_level_low");
+    if(sys_error2)Blynk.logEvent("sd_card_error");
+    if(sys_error3)Blynk.logEvent("slave_connection_error");
   }
 }
 void loop(){
