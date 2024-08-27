@@ -123,6 +123,7 @@ const char *txmenu[] = {        // Los textos del menu principal, la longitud ma
     "Change dawn time   ",
     "Devices connected  ",
     "Reset day counter  ",
+    "Offline Mode       ",
     "Save and exit      ",
     "Exit               "
 };
@@ -913,10 +914,7 @@ void setup() {
   bool res;
   wm.setConfigPortalBlocking(false);
   res = wm.autoConnect("HanguingGardenAP","WfMB4by10n"); // password protected ap
-      if(!res) {
-        Serial.println("Failed to connect");
-        //wm.startConfigPortal("OnDemandAP");
-    } 
+      if(!res) Serial.println("Failed to connect");
 
   else {
       //if you get here you have connected to the WiFi    
@@ -1435,14 +1433,19 @@ void BlynkUpdate(){
     if(sys_error3)Blynk.logEvent("slave_connection_error");
   }
 }
-void loop(){
-  tNow=esp_timer_get_time(); //Resolución 1us limite: +200 años vs millis() cuyo limite es 50 días
-  if(WiFi.status() != WL_CONNECTED)
-  {
+
+void doWiFiManager(){
+  
+  if(WiFi.status() != WL_CONNECTED )
+    {
     wm.process();
-    sys_error1=true;
+    if(!sys_error1) sys_error1=true;
   }
   else sys_error1=false;
+}
+void loop(){
+  tNow=esp_timer_get_time(); //Resolución 1us limite: +200 años vs millis() cuyo limite es 50 días
+  doWiFiManager();
   //Check Button Interruption
   if(ButtonInterruption)
   {
