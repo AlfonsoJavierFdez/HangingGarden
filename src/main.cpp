@@ -58,7 +58,7 @@
 // Valor de tiempo (en microsegundos)
 uint64_t tNow=0,tPrevLog=0,tPrevLCDUpdate=0,tPrevBtn=0, tPrevWatering=0, tPrevNutADose=0, tPrevNutBDose=0;
 uint64_t tPrevNutA2Dose=0, tPrevNutB2Dose=0;
-uint64_t tPrevSample=0, tPrevSensorUpdate=0, tPrevBlynkUpdate=0;
+uint64_t tPrevSample=0, tPrevSensorUpdate=0, tPrevBlynkUpdate=0, tPrevLightCheck=0, tPrevLightCheck2=0;
 #define PIN_SPI_CS 5 // The ESP32 pin GPIO5
 #define DS3231_I2C_ADDRESS 0x68 // Dirección del módulo RTC
 #define COUNT(x) sizeof(x)/sizeof(*x)                   // Macro para contar el numero de elementos de un array 
@@ -72,7 +72,7 @@ const int tThreshold = 5000; // 5ms
 const int tDebounce = 50000; // 50 ms
 const int tLCDRefresh = 5000000; // 5s
 const int min_2_us =  60000000; // pasa de minutos a microsegundos
-const byte Nut_flow_rate = 10; // 10 ml/min
+const byte Nut_flow_rate = 100; // 100 ml/min
 bool sys_error1=false; //Network error
 bool sys_error2=false; //SD card error
 bool sys_error3=false; //I2C error
@@ -164,6 +164,7 @@ struct MYCONFIG{    // Estructura con la configuración que se almacenaran en la
 struct MYVALUES{   // Estructura con las variables que se almacenaran en la memoria SD
   int Daycounter; // Days transcurred in the current 
   int LightTime;
+  int LightTime2;
   int CurrentDay;
 };
 union MEMORY{       // Estructura UNION para facilitar la lectura y escritura de la memoria
@@ -229,7 +230,7 @@ void IRAM_ATTR doEncode() // Double precision with one interrupt
   tNow=esp_timer_get_time(); //Resolución 1us limite: +200 años vs millis() cuyo limite es 50 días
   if (tNow > tPrevBtn + tThreshold)
   {
-    if (digitalRead(channelPinA) != digitalRead(channelPinB)) // counterclockwise turn
+    if (digitalRead(channelPinA) == digitalRead(channelPinB)) // counterclockwise turn
     {
       Serial.println("CW turn!");
       EncoderCW = true;
@@ -283,6 +284,7 @@ void DATALOG(){
   if((tNow-tPrevLog) >= (memory.d.DatalogPeriod*min_2_us) ){ 
    DataFile = SD.open("/DATALOG.csv", FILE_WRITE);
     if (DataFile) {
+      sys_error2=false;
       if(DataFile.size()==0)DataFile.println("Date,Hour,Day,AmbTemp,AmbRH,WaterTemp,TDS,pH,LightLevel,WaterPump,NutAPump,NutBPump,GrowLight");
       DataFile.seek(DataFile.size());
       DataFile.print(GetDate());
@@ -317,8 +319,10 @@ void DATALOG(){
       Serial.println("error opening DATALOG.csv");
       sys_error2=true;
     }
-    if(memory.d.Slave2==1)DataFile = SD.open("/DATALOG2.csv", FILE_WRITE);
+    if(memory.d.Slave2==1){
+    DataFile = SD.open("/DATALOG2.csv", FILE_WRITE);
     if (DataFile) {
+      sys_error2=false;
       if(DataFile.size()==0)DataFile.println("Date,Hour,Day,AmbTemp,AmbRH,WaterTemp,TDS,pH,LightLevel,WaterPump,NutAPump,NutBPump,GrowLight");
       DataFile.seek(DataFile.size());
       DataFile.print(GetDate());
@@ -352,6 +356,7 @@ void DATALOG(){
     else{
       Serial.println("error opening DATALOG2.csv");
       sys_error2=true;
+      }
     }
   }
 }
@@ -455,6 +460,7 @@ void saveValues(){
   JsonDocument doc;
   doc["Daycounter"]=memory.v.Daycounter;
   doc["LightTime"]=memory.v.LightTime;
+  doc["LightTime2"]=memory.v.LightTime2;
   doc["CurrentDay"]=memory.v.CurrentDay;
   if (serializeJson(doc, file) == 0) {
     Serial.println(F("Failed to write to file"));
@@ -478,10 +484,12 @@ void loadValues(){
       memory.v.CurrentDay=0;
       memory.v.Daycounter=0;
       memory.v.LightTime=0;
+      memory.v.LightTime2=0;
     }
     memory.v.CurrentDay=doc["CurrentDay"];
     memory.v.Daycounter=doc["Daycounter"];
     memory.v.LightTime=doc["LightTime"];
+    memory.v.LightTime2=doc["LightTime2"];
 }
 /**
  * MUESTRA EL SUBMENU EN EL LCD.
@@ -907,7 +915,7 @@ void setup() {
   res = wm.autoConnect("HanguingGardenAP","WfMB4by10n"); // password protected ap
       if(!res) {
         Serial.println("Failed to connect");
-        wm.startConfigPortal("OnDemandAP");
+        //wm.startConfigPortal("OnDemandAP");
     } 
 
   else {
@@ -957,15 +965,12 @@ void MainScreen(){
   case 1: if(EncoderTurn){lcd.backlight();EncoderTurn=false;} else lcd.noBacklight(); break;
   case 2: lcd.backlight(); break;
   }
-  if(memory.d.Slave2==1){
-  lcd.setCursor(0,0); lcd.print("                    ");
-  lcd.setCursor(0,1); lcd.print("                    ");
-  }
+  if(memory.d.Slave2==1)lcd.clear();
   else{
       lcd.setCursor(0,0); lcd.print(" My Hanging Gardens ");
       lcd.setCursor(0,1); lcd.print("        Day:");
       lcd.setCursor(12,1); lcd.print(memory.v.Daycounter);
-      lcd.setCursor(13,1); lcd.print("     ");
+      lcd.setCursor(13,1); lcd.print("      ");
   }
   lcd.setCursor(0,2); lcd.print("                    ");
   lcd.setCursor(0,3); lcd.print("                    ");
@@ -991,6 +996,12 @@ void MainScreen(){
     lcd.setCursor(0,0); lcd.print(" My Hanging Gardens ");
     lcd.setCursor(0,1); lcd.print("        Day:");
     lcd.setCursor(12,1); lcd.print(memory.v.Daycounter);
+    if(memory.v.Daycounter<100){
+      lcd.setCursor(13,1); lcd.print("      ");
+    }
+    else{
+      lcd.setCursor(13,1); lcd.print("     ");
+    }
     }
     lcd.setCursor(0,2); lcd.print(GetDate()+"  "+ GetHour());
     lcd.setCursor(0,3);
@@ -1089,7 +1100,7 @@ void NutrientPumps(){
         tPrevNutADose=tNow;
       }
     }
-    if((memory.d.Slave2==1)&&((tNow-tPrevNutADose)>= (memory.d.NutADose*(1/Nut_flow_rate)*min_2_us)) && !NutAPump_is_waiting){
+    if((memory.d.Slave2==1)&&((tNow-tPrevNutA2Dose)>= (memory.d.NutADose*(1/Nut_flow_rate)*min_2_us)) && !NutAPump_is_waiting){
       if(!NutAPump2_is_running && LowNutSol2){
         if(NutA_LVL2){
           NutAPump2_is_running=true;
@@ -1122,7 +1133,7 @@ void NutrientPumps(){
         tPrevNutBDose=tNow;
       }
     }
-    if((memory.d.Slave2==1)&&((tNow-tPrevNutBDose)>= (memory.d.NutBDose*(1/Nut_flow_rate)*min_2_us)) && !NutBPump_is_waiting){
+    if((memory.d.Slave2==1)&&((tNow-tPrevNutB2Dose)>= (memory.d.NutBDose*(1/Nut_flow_rate)*min_2_us)) && !NutBPump_is_waiting){
       if(!NutBPump2_is_running && LowNutSol2){
         if(NutB_LVL2){
           NutBPump2_is_running=true;
@@ -1154,24 +1165,37 @@ void GrowLight(){
   if(memory.v.CurrentDay!=now.day() && memory.d.DawnTime<=now.hour()){
     memory.v.Daycounter++;
     memory.v.LightTime=0;
+    memory.v.LightTime2=0;
     memory.v.CurrentDay=now.day();
     saveValues();
   }
-  if(LightLevel<2 && memory.v.LightTime<memory.d.Photoperiod && !GrowLight_is_active){
+  if(LightLevel>=2){
+    memory.v.LightTime+=(tNow-tPrevLightCheck);
+    tPrevLightCheck=tNow;
+    saveValues();
+  } 
+  if(LightLevel<2 && memory.v.LightTime<(memory.d.Photoperiod*60*min_2_us) && !GrowLight_is_active){
     GrowLight_is_active=true;
     I2C_PIN1.digitalWrite(P3,HIGH); 
   }
-  else if(GrowLight_is_active){
+  if(GrowLight_is_active && (LightLevel==3||memory.v.LightTime>(memory.d.Photoperiod*60*min_2_us))){
     GrowLight_is_active=false;
     I2C_PIN1.digitalWrite(P3,LOW);
   }
-  if((memory.d.Slave2==1)&&(LightLevel2<2 && memory.v.LightTime<memory.d.Photoperiod) && !GrowLight2_is_active){
+  if(memory.d.Slave2==1){
+    if(LightLevel2>=2){
+    memory.v.LightTime2+=(tNow-tPrevLightCheck2);
+    tPrevLightCheck2=tNow;
+    saveValues();
+    } 
+    if((LightLevel2<2 && memory.v.LightTime2<(memory.d.Photoperiod*60*min_2_us)) && !GrowLight2_is_active){
     GrowLight2_is_active=true;
     I2C_PIN2.digitalWrite(P3,HIGH); 
-  }
-  else if(GrowLight2_is_active){
+    }
+    if(GrowLight2_is_active &&(LightLevel2==3||memory.v.LightTime2>=(memory.d.Photoperiod*60*min_2_us))){
     GrowLight2_is_active=false;
     I2C_PIN2.digitalWrite(P3,LOW);
+    }
   }
 }
 /**
