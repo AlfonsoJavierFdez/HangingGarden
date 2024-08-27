@@ -123,7 +123,6 @@ const char *txmenu[] = {        // Los textos del menu principal, la longitud ma
     "Change dawn time   ",
     "Devices connected  ",
     "Reset day counter  ",
-    "Offline Mode       ",
     "Save and exit      ",
     "Exit               "
 };
