@@ -180,7 +180,7 @@ const char* ConfigFilename = "/config.txt"; //<- SD library uses 8.3 filenames
 float temperature, humidity;
 float TDS, pH, WaterTemp, LDR;
 float TDS2, pH2, WaterTemp2, LDR2;
-#define SCOUNT 20 // sum of sample point
+#define SCOUNT 25 // sum of sample point
 #define BCOEFF  3380 //B-constante: 3380K -/+ 1% 
 #define SERIESRESISTOR 10000 // Resistencia en serie con el termistor
 #define THERMISTORNOMINAL 10000 // Resistencia nominal del sensor NTC
@@ -913,8 +913,10 @@ void setup() {
   bool res;
   wm.setConfigPortalBlocking(false);
   res = wm.autoConnect("HanguingGardenAP","WfMB4by10n"); // password protected ap
-      if(!res) Serial.println("Failed to connect");
-
+  if(!res){
+    Serial.println("Failed to connect");
+    //wm.startConfigPortal("OnDemandAP");
+  }
   else {
       //if you get here you have connected to the WiFi    
     Serial.println("WiFi Connected");  
@@ -1166,11 +1168,16 @@ void GrowLight(){
     memory.v.CurrentDay=now.day();
     saveValues();
   }
+  
   if(LightLevel>=2){
     memory.v.LightTime+=(tNow-tPrevLightCheck);
-    tPrevLightCheck=tNow;
     saveValues();
-  } 
+  }
+  if(memory.d.Slave2==1 && LightLevel2>=2){
+    memory.v.LightTime2+=(tNow-tPrevLightCheck);
+    saveValues();
+  }
+  tPrevLightCheck=tNow; 
   if(LightLevel<2 && memory.v.LightTime<(memory.d.Photoperiod*60*min_2_us) && !GrowLight_is_active){
     GrowLight_is_active=true;
     I2C_PIN1.digitalWrite(P3,HIGH); 
@@ -1241,7 +1248,9 @@ int avgArray(int Array[],int size){
 }
 void Sensors(){
   float factorEscala = 0.125; // El factor de escala del ADC es de 0,125mV
-   if(tNow-tPrevSample > 20000)     //every 20 milliseconds,try to read the analog sample from the ADC
+  int SamplePeriod =200000; // 200ms
+  int SensorUpdatePeriod = 5000000; // 5 seconds
+   if(tNow-tPrevSample > SamplePeriod/4)     //every sample period,try to read the analog sample from the ADC of one of the channels
    {
      tPrevSample=tNow;
     if(ADC1.isConnected() && ADC1.isReady()){
@@ -1319,7 +1328,7 @@ void Sensors(){
     }
     
    }
-   if(tNow-tPrevSensorUpdate > 2000000) { // Every 2 seconds update the sensors value
+   if(tNow-tPrevSensorUpdate > SensorUpdatePeriod) { // Every 2 seconds update the sensors value
       tPrevSensorUpdate=tNow;
     /* DIGITAL SENSORS*/
       if(I2C_PIN1.digitalRead(P4) && I2C_PIN1.digitalRead(P5)) water_LVL=2;
@@ -1436,12 +1445,14 @@ void BlynkUpdate(){
 void doWiFiManager(){
   
   if(WiFi.status() != WL_CONNECTED )
-    {
+  {
     wm.process();
     if(!sys_error1) sys_error1=true;
   }
   else sys_error1=false;
 }
+
+
 void loop(){
   tNow=esp_timer_get_time(); //Resolución 1us limite: +200 años vs millis() cuyo limite es 50 días
   doWiFiManager();
