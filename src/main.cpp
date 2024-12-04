@@ -106,8 +106,76 @@ byte bARROW[]   = {                               // Bits icono flecha
   0x00,
   0x00
 };
- 
-enum Screen{ Menu1, Flag,Flag1, Number }; // Enumerador con los distintos tipos de submenus disponibles
+byte iA_tilde     = 1;                              // ID caracter á
+byte bA_tilde[]   = {                               // Bits carácter á
+  0x02,
+  0x04,
+  0x00,
+  0x0E,
+  0x01,
+  0x0F,
+  0x11,
+  0x0F
+};
+byte iE_tilde     = 2;                              // ID caracter é
+byte bE_tilde[]   = {                               // Bits carácter é
+  0x02,
+  0x04,
+  0x00,
+  0x0E,
+  0x11,
+  0x1F,
+  0x10,
+  0x0F
+};
+byte iI_tilde     = 3;                              // ID caracter í
+byte bI_tilde[]   = {                               // Bits carácter í
+  0x02,
+  0x04,
+  0x00,
+  0x0C,
+  0x04,
+  0x04,
+  0x0E,
+  0x00
+};
+byte iO_tilde     = 4;                              // ID caracter ó
+byte bO_tilde[]   = {                               // Bits carácter ó
+  0x02,
+  0x04,
+  0x00,
+  0x0E,
+  0x11,
+  0x11,
+  0x0E,
+  0x00
+};
+
+byte iU_tilde     = 5;                              // ID caracter ú
+byte bU_tilde[]   = {                               // Bits carácter ú
+  0x02,
+  0x04,
+  0x00,
+  0x11,
+  0x11,
+  0x11,
+  0x0E,
+  0x00
+};
+
+byte iEnne     = 6;                              // ID caracter ñ
+byte bEnne[]   = {                               // Bits carácter ñ
+  0x0D,
+  0x12,
+  0x00,
+  0x16,
+  0x19,
+  0x11,
+  0x11,
+  0x00
+};
+
+enum Screen{ Menu1, Flag,Flag1,Flag2, Number }; // Enumerador con los distintos tipos de submenus disponibles
  
 const char *txmenu[] = {        // Los textos del menu principal, la longitud maxima = columnsLCD-1, rellenar caracteres sobrantes con espacios.
     "Change Date/Hour   ",
@@ -123,10 +191,31 @@ const char *txmenu[] = {        // Los textos del menu principal, la longitud ma
     "Change dawn time   ",
     "Devices connected  ",
     "Reset day counter  ",
+    "Language           ",
     "Save and exit      ",
     "Exit               "
 };
 const byte imenu = COUNT(txmenu);   // Numero de items/opciones del menu principal
+ 
+const char *txmenu_esp[] = {        // Los textos del menu principal, la longitud maxima = columnsLCD-1, rellenar caracteres sobrantes con espacios.
+    "Cambiar Fecha/Hora ",
+    "TDS m",
+    "Periodo de riego   ",
+    "% Riego por periodo",
+    "Dosis nutriente A  ",
+    "Dosis nutriente B  ",
+    "Periodo entre dosis",
+    "Periodo de registro",
+    "Brillo pantalla LCD",
+    "Fotoperiodo        ",
+    "Hora del amanecer  ",
+    "N",
+    "Reset contador d",
+    "Idioma             ",
+    "Guardar y Salir    ",
+    "Salir              "
+};
+
  
 const char *txRTCmenu[] = {       // Los textos del menu RTC, la longitud maxima = columnsLCD-1, rellenar caracteres sobrantes con espacios.
     "Change Year        ",
@@ -138,6 +227,14 @@ const char *txRTCmenu[] = {       // Los textos del menu RTC, la longitud maxima
 };
 const byte iRTCmenu = COUNT(txRTCmenu);                       // Numero de items/opciones del menu RTC
  
+ const char *txRTCmenu_esp[] = {       // Los textos del menu RTC, la longitud maxima = columnsLCD-1, rellenar caracteres sobrantes con espacios.
+    "Cambiar a",
+    "Cambiar mes        ",
+    "Cambiar d",
+    "Cambiar hora       ",
+    "Cambiar minutos    ",
+    "Salir              "
+};
 enum menu1{ OFF, Auto_OFF ,ON };                         // Enumerador de las opciones disponibles del submenu 2 (tienen que seguir el mismo orden que los textos)
 const char *txmenu1[] = {                              // Textos del submenu 1, longitud maxima = columnsLCD-2, rellenar caracteres sobrantes con espacios
     "   Always OFF     ",
@@ -146,6 +243,11 @@ const char *txmenu1[] = {                              // Textos del submenu 1, 
 };
 const byte imenu1 = COUNT(txmenu1);                       // Numero de items/opciones del menu principal
 
+const char *txmenu1_esp[] = {                              // Textos del submenu 1, longitud maxima = columnsLCD-2, rellenar caracteres sobrantes con espacios
+    " Siempre apagado  ",
+    "   Auto-apagado   ",
+    "Siempre encendido ",
+};
 /* ESTRUCTURAS MEMORIA */
 struct MYCONFIG{    // Estructura con la configuración que se almacenaran en la memoria SD
     int initialized;
@@ -160,6 +262,7 @@ struct MYCONFIG{    // Estructura con la configuración que se almacenaran en la
     int Photoperiod;  // The time that the crop need to be in a luminous environment
     int DawnTime;    // Hour where the photoperiod of the day starts (and the day in daycounter)
     int Slave2;     // Config for the availability of the second slave device
+    int Language;     // Config the language of the LCD menu
 };
 struct MYVALUES{   // Estructura con las variables que se almacenaran en la memoria SD
   int Daycounter; // Days transcurred in the current 
@@ -390,6 +493,7 @@ void saveConfig(){
   doc["Photoperiod"]=memory.d.Photoperiod;
   doc["DawnTime"]=memory.d.DawnTime;
   doc["Slave2"]=memory.d.Slave2;
+  doc["Language"]=memory.d.Language;
   
 
     // Serialize JSON to file
@@ -426,6 +530,7 @@ void loadConfig(){
       memory.d.Photoperiod=12;
       memory.d.DawnTime=8;
       memory.d.Slave2=0;
+      memory.d.Language=0;
     }
     memory.d.initialized=1;
     memory.d.minTDS=doc["minTDS"];
@@ -439,6 +544,7 @@ void loadConfig(){
     memory.d.Photoperiod=doc["Photoperiod"];
     memory.d.DawnTime=doc["DawnTime"];
     memory.d.Slave2=doc["Slave2"];
+    memory.d.Language=doc["Language"];
 
 }
 
@@ -501,7 +607,8 @@ void loadValues(){
  * @param maxValue  Valor maximo que puede tener la variable.
  * @param stepValue Resolución del cambio del valor de la variable
  */
-void openSubMenu( byte menuID, Screen screen, int *value, int minValue, int maxValue, int stepValue ){
+void openSubMenu( byte menuID, Screen screen, int *value, int minValue, int maxValue, int stepValue )
+{
     boolean exitSubMenu = false;
     boolean forcePrint  = true;
  
@@ -533,7 +640,20 @@ void openSubMenu( byte menuID, Screen screen, int *value, int minValue, int maxV
             //ButtonInterruption=false;
  
             lcd.setCursor(0,0);
+            if(memory.d.Language==0)
             lcd.print(txmenu[menuID]);
+            else{
+              lcd.print(txmenu[menuID]);
+                                if(i==1){
+                    lcd.write(iI_tilde);
+                    lcd.print("nimo        ");
+                  }
+                  if(i==11){
+                    lcd.print((char)223);
+                    lcd.print(" de Dispositivos ");
+                  }
+                }
+            }
  
             lcd.setCursor(0,1);
             lcd.print("<");
@@ -543,17 +663,40 @@ void openSubMenu( byte menuID, Screen screen, int *value, int minValue, int maxV
             if( screen == Screen::Menu1 )
             {
                 lcd.setCursor(1,1);
+                if(memory.d.Language==0)
                 lcd.print(txmenu1[*value]);
+                else
+                lcd.print(txmenu1_esp[*value]); 
             }
             else if( screen == Screen::Flag )
             {
                 lcd.setCursor(1, 1);
-                lcd.print(*value == 0 ? "    One Device    " : "    Two Devices   ");
+                if(memory.d.Language==0)
+                  lcd.print(*value == 0 ? "    One Device    " : "    Two Devices   ");
+                else 
+                  lcd.print(*value == 0 ? "  Un Dispositivo  " : " Dos Dispositivos ");
             }
             else if( screen == Screen::Flag1 )
             {
                 lcd.setCursor(1, 1);
-                lcd.print(*value == 1 ? "        YES       " : "         NO       ");
+                if(memory.d.Language==0)
+                  lcd.print(*value == 1 ? "        YES       " : "         NO       ");
+                else{
+                  lcd.print(*value == 1 ? "         S" : "         NO       ");
+                  if(*value){
+                    lcd.write(iI_tilde);
+                    lcd.print("      ");
+                  }
+                }
+            }
+            else if( screen == Screen::Flag2 )
+            {
+                lcd.setCursor(1, 1);
+                lcd.print(*value == 0 ? "     English      " : "     Espa");
+                if (*value){
+                  lcd.write(iEnne);
+                  lcd.print("ol    ");
+                }
             }
             else if( screen == Screen::Number )
             {
@@ -568,12 +711,11 @@ void openSubMenu( byte menuID, Screen screen, int *value, int minValue, int maxV
                 if(menuID==9) lcd.print("h  ");
 
             }
-        }
- 
-    }
- 
-    lcd.clear();
+      }
+      lcd.clear();
 }
+
+
 
 void openRTCSubMenu(int id,int minValue, int maxValue){
     boolean exitSubMenu = false;
@@ -608,6 +750,17 @@ void openRTCSubMenu(int id,int minValue, int maxValue){
  
             lcd.setCursor(0,0);
             lcd.print(txRTCmenu[id]);
+            if(memory.d.Language==1){
+              lcd.print(txRTCmenu_esp[id]);
+              if(id==0){
+                lcd.write(iEnne);
+                lcd.print("o       ");
+              }
+            if(id==2){
+                lcd.write(iI_tilde);
+                lcd.print("a       ");
+              }
+            }
  
             lcd.setCursor(0,1);
             lcd.print("<");
@@ -692,8 +845,20 @@ void openRTCMenu(){
  
             for( int i=graphMenu, j=0; i< endFor2 ; i++, j++ )
             {
-                lcd.setCursor(1, j);
+              lcd.setCursor(1, j);
+              if(memory.d.Language==0)
                 lcd.print( (i<iRTCmenu) ? txRTCmenu[i] : "                    " );
+              else{
+                lcd.print( (i<iRTCmenu) ? txRTCmenu_esp[i] : "                    " );
+                if(i==0){
+                  lcd.write(iEnne);
+                  lcd.print("o       ");
+                }
+                if(i==2){
+                  lcd.write(iI_tilde);
+                  lcd.print("a       ");
+                }
+              }
             }
  
             for( int i=0 ; i<rowsLCD ; i++ )
@@ -755,8 +920,9 @@ void openMenu()
                 case 10: openSubMenu( idxMenu, Screen::Number, &memory.d.DawnTime,       1, 24, 1       ); break;
                 case 11: openSubMenu( idxMenu, Screen::Flag, &memory.d.Slave2,           0, 1, 1        ); break;
                 case 12: openSubMenu(idxMenu, Screen::Flag1, &memory.v.Daycounter,    1, memory.v.Daycounter,(memory.v.Daycounter-1) ); break;
-                case 13:  exitMenu = true; saveConfig(); saveValues(); break;   //Salir y guardar
-                case 14:  exitMenu = true; loadConfig(); loadValues(); break;                //Salir y cancelar cambios
+                case 13: openSubMenu( idxMenu, Screen::Flag2, &memory.d.Language,           0, 1, 1        ); break;
+                case 14:  exitMenu = true; saveConfig(); saveValues(); break;   //Salir y guardar
+                case 15:  exitMenu = true; loadConfig(); loadValues(); break;                //Salir y cancelar cambios
             }
             forcePrint = true;
         }
@@ -784,7 +950,23 @@ void openMenu()
             for( int i=graphMenu, j=0; i< endFor2 ; i++, j++ )
             {
                 lcd.setCursor(1, j);
+                if(memory.d.Language==0)
                 lcd.print( (i<imenu) ? txmenu[i] : "                    " );
+                else{
+                  lcd.print( (i<imenu) ? txmenu_esp[i] : "                    " );
+                  if(i==1){
+                    lcd.write(iI_tilde);
+                    lcd.print("nimo        ");
+                  }
+                  if(i==11){
+                    lcd.print((char)223);
+                    lcd.print(" de Dispositivos ");
+                  }
+                  if(i==12){
+                    lcd.write(iI_tilde);
+                    lcd.print("as");
+                  }
+                }
             }
  
             for( int i=0 ; i<rowsLCD ; i++ )
@@ -818,6 +1000,12 @@ void setup() {
   lcd.init();
   lcd.backlight();
   lcd.createChar(iARROW,bARROW);
+  lcd.createChar(iA_tilde,bA_tilde);
+  lcd.createChar(iE_tilde,bE_tilde);
+  lcd.createChar(iI_tilde,bI_tilde);
+  lcd.createChar(iO_tilde,bO_tilde);
+  lcd.createChar(iU_tilde,bU_tilde);
+  lcd.createChar(iEnne,bEnne);
   lcd.home();
 
   // Imprime la informacion del proyecto:
@@ -966,34 +1154,64 @@ void MainScreen(){
   }
   if(memory.d.Slave2==1)lcd.clear();
   else{
+    if(memory.d.Language==0){
       lcd.setCursor(0,0); lcd.print(" My Hanging Gardens ");
       lcd.setCursor(0,1); lcd.print("        Day:");
+    }
+    else{
+      lcd.setCursor(0,0); lcd.print(" Mi Jard");
+      lcd.write(iI_tilde);
+      lcd.print("n Colgante ");
+      lcd.setCursor(0,1); lcd.print("        D");
+      lcd.write(iI_tilde);
+      lcd.print("a:");
+    }
       lcd.setCursor(12,1); lcd.print(memory.v.Daycounter);
       lcd.setCursor(13,1); lcd.print("      ");
+    
   }
   lcd.setCursor(0,2); lcd.print("                    ");
   lcd.setCursor(0,3); lcd.print("                    ");
   if(LastScreen==3 && (sys_error1||sys_error2||sys_error3)){
     i=1;
-    lcd.setCursor(0,0); lcd.print("******WARNINGS******");
+    lcd.setCursor(0,0); 
+    if(memory.d.Language==0)lcd.print("******WARNINGS******");
+    else lcd.print("****ADVERTENCIAS****");
+  
     if(sys_error1){
-      lcd.setCursor(0,i); lcd.print("err1:Network error ");
+      lcd.setCursor(0,i); 
+      if(memory.d.Language==0) lcd.print("err1:Network error ");
+      else lcd.print("err1:Error de red   ");
       i++;
     }
     if(sys_error2){
-      lcd.setCursor(0,i); lcd.print("err2:SD card error ");
+      lcd.setCursor(0,i); 
+      if(memory.d.Language==0) lcd.print("err2:SD card error ");
+      else lcd.print("err2:Error de memoria  ");
       i++;
     }
     if(sys_error3){
-      lcd.setCursor(0,i); lcd.print("err3:I2C addr error ");
+      lcd.setCursor(0,i); 
+      if(memory.d.Language==0) lcd.print("err3:I2C addr error ");
+      else lcd.print("err3:Error bus I2C  ");
       i++;
     }
     LastScreen=0;
   }
   else if(LastScreen==3||LastScreen==0){
     if(memory.d.Slave2==1){
+    if(memory.d.Language){
     lcd.setCursor(0,0); lcd.print(" My Hanging Gardens ");
     lcd.setCursor(0,1); lcd.print("        Day:");
+    }
+    else{
+      lcd.setCursor(0,0); lcd.print(" Mi Jard");
+      lcd.write(iI_tilde);
+      lcd.print("n Colgante ");
+      lcd.setCursor(0,1); lcd.print("        D");
+      lcd.write(iI_tilde);
+      lcd.print("a:");
+    }
     lcd.setCursor(12,1); lcd.print(memory.v.Daycounter);
     if(memory.v.Daycounter<100){
       lcd.setCursor(13,1); lcd.print("      ");
@@ -1008,7 +1226,8 @@ void MainScreen(){
       lcd.print(" ");
       lcd.print((char)223);      // print ° character
       lcd.print("C");
-      lcd.print("  RH:");
+      if(memory.d.Language==0) lcd.print("  RH:");
+      else lcd.print("  HR:");
       lcd.print(humidity);     // print the humidity
       lcd.print(" %");
       
@@ -1020,13 +1239,26 @@ void MainScreen(){
     if(memory.d.Slave2==1){}
     else{
       lcd.setCursor(0,2); lcd.print("Nut A:");
-      lcd.setCursor(6,2); lcd.print(NutA_LVL==true? "OK ":"LOW");
+      lcd.setCursor(6,2); 
+      if(memory.d.Language==0)lcd.print(NutA_LVL==true? "OK ":"LOW");
+      else lcd.print(NutA_LVL==true? "OK ":"NO ");
       lcd.setCursor(11,2);lcd.print("Nut B:");
-      lcd.setCursor(17,2); lcd.print(NutB_LVL==true? "OK":"LOW"); 
+      lcd.setCursor(17,2);
+      if(memory.d.Language==0)lcd.print(NutB_LVL==true? "OK ":"LOW");
+      else lcd.print(NutB_LVL==true? "OK ":"NO ");
       lcd.setCursor(0,3); 
-      if(water_LVL==2)lcd.print(" Water Level: High  ");
-      if(water_LVL==1)lcd.print(" Water Level: Mid   ");
-      if(water_LVL==0)lcd.print(" Water Level: LOW!  ");
+      if(water_LVL==2){
+        if(memory.d.Language==0) lcd.print(" Water Level: High  ");
+        else lcd.print("Nivel del Agua: Alto");
+      }
+      if(water_LVL==1){
+        if(memory.d.Language==0) lcd.print(" Water Level: Mid   ");
+        else lcd.print("Nivel del Agua:Medio");
+      }
+      if(water_LVL==0){
+        if(memory.d.Language==0) lcd.print(" Water Level: LOW!  ");
+        else lcd.print("Nivel del Agua:Bajo!");
+      }
       LastScreen=2;
     }
   }
@@ -1040,12 +1272,28 @@ void MainScreen(){
     }
     else lcd.setCursor(8,2); lcd.print(" ");
     lcd.setCursor(11,2); lcd.print("pH:"); lcd.print(pH);
-    lcd.setCursor(0,3); lcd.print("Light Level:");
+    lcd.setCursor(0,3); 
+    if(memory.d.Language==0) lcd.print("Light Level:");
+    else lcd.print("Nivel de Luz: ");
+    if(memory.d.Language==0) lcd.setCursor(12,3);
+    else lcd.setCursor(14,3);
     switch(LightLevel){
-    case 0:lcd.setCursor(12,3); lcd.print("Dark    ");
-    case 1:lcd.setCursor(12,3); lcd.print("Dim     ");
-    case 2:lcd.setCursor(12,3); lcd.print("Bright  ");
-    case 3:lcd.setCursor(12,3); lcd.print("Sunlight");
+    case 0:
+    if(memory.d.Language==0) lcd.print("Dark    "); 
+    else lcd.print("Oscuro");
+    break;
+    case 1:
+    if(memory.d.Language==0) lcd.print("Dim     "); 
+    else lcd.print("Tenue ");
+    break;
+    case 2:
+    if(memory.d.Language==0) lcd.print("Bright  "); 
+    else lcd.print("Alto  ");
+    break;
+    case 3: 
+    if(memory.d.Language==0) lcd.print("Sunlight");
+    else lcd.print("Diurna");
+    break;
     }
     LastScreen=3;
   }
